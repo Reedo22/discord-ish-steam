@@ -320,6 +320,24 @@ html.discordish-incall .voiceRoomDragBar {
 .ds-btn svg { width: 22px !important; height: 22px !important; fill: #fff !important; }
 .ds-leave { background: #f23f43 !important; }
 .ds-leave:hover { background: #d83c3e !important; }
+.ds-settings { color: #fff !important; font-size: 20px !important; }
+
+/* voice-settings popover */
+.ds-voice-settings {
+  position: absolute !important;
+  bottom: 96px !important; left: 50% !important; transform: translateX(-50%) !important;
+  z-index: 10 !important;
+  width: 280px !important;
+  background: #1e1f22 !important;
+  border-radius: 10px !important;
+  padding: 12px 14px !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,.5) !important;
+}
+.ds-vs-title { color: #fff !important; font-weight: 700 !important; font-size: 12px !important; text-transform: uppercase !important; letter-spacing: .02em !important; margin-bottom: 8px !important; }
+.ds-vs-row { display: flex !important; align-items: center !important; justify-content: space-between !important; padding: 6px 0 !important; color: var(--dc-text) !important; }
+.ds-vs-label { font-size: 13px !important; }
+.ds-vs-slider { width: 130px !important; accent-color: var(--dc-accent) !important; }
+.ds-vs-toggle { width: 16px !important; height: 16px !important; accent-color: var(--dc-accent) !important; }
 
 /* minimize/expand toggle */
 .discordish-min-btn {

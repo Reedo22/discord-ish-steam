@@ -35,6 +35,11 @@
 
   function el(doc, tag, cls) { var e = doc.createElement(tag); if (cls) e.className = cls; return e; }
 
+  function vcStore() {
+    var a = window.g_FriendsUIApp;
+    return a && a.m_VoiceChatStore;
+  }
+
   function buildControls(doc, stage) {
     var bar = el(doc, "div", "ds-controls");
     [["mic", "Mute", ".ToggleMicrophoneButton"],
@@ -49,7 +54,54 @@
       });
       bar.appendChild(b);
     });
+    // settings gear
+    var gear = el(doc, "button", "ds-btn ds-settings");
+    gear.title = "Voice settings";
+    gear.textContent = "⚙";
+    bar.appendChild(gear);
     stage.appendChild(bar);
+
+    // voice-settings popover (drives g_FriendsUIApp.m_VoiceChatStore directly)
+    var pop = el(doc, "div", "ds-voice-settings");
+    pop.style.display = "none";
+    var refreshers = [];
+    function addToggle(label, getter, setter) {
+      var row = el(doc, "label", "ds-vs-row");
+      var sp = el(doc, "span", "ds-vs-label"); sp.textContent = label;
+      var cb = doc.createElement("input"); cb.type = "checkbox"; cb.className = "ds-vs-toggle";
+      cb.addEventListener("change", function () { var s = vcStore(); if (s) s[setter](cb.checked); });
+      refreshers.push(function () { var s = vcStore(); if (s) cb.checked = !!s[getter](); });
+      row.appendChild(sp); row.appendChild(cb); pop.appendChild(row);
+    }
+    function addSlider(label, getter, setter) {
+      var row = el(doc, "div", "ds-vs-row");
+      var sp = el(doc, "span", "ds-vs-label"); sp.textContent = label;
+      var sl = doc.createElement("input"); sl.type = "range"; sl.min = 0; sl.max = 100; sl.className = "ds-vs-slider";
+      sl.addEventListener("input", function () {
+        var s = vcStore(); if (!s) return;
+        s[setter](s.ConvertSliderToGainValue ? s.ConvertSliderToGainValue(+sl.value) : +sl.value);
+      });
+      refreshers.push(function () {
+        var s = vcStore(); if (!s) return;
+        var g = s[getter]();
+        sl.value = s.ConvertGainValueToSliderValue ? s.ConvertGainValueToSliderValue(g) : g;
+      });
+      row.appendChild(sp); row.appendChild(sl); pop.appendChild(row);
+    }
+    var title = el(doc, "div", "ds-vs-title"); title.textContent = "Voice Settings";
+    pop.appendChild(title);
+    addToggle("Noise Cancellation", "GetUseNoiseCancellation", "SetUseNoiseCancellation");
+    addToggle("Echo Cancellation", "GetUseEchoCancellation", "SetUseEchoCancellation");
+    addToggle("Auto Gain Control", "GetUseAutoGainControl", "SetUseAutoGainControl");
+    addSlider("Input Volume", "GetVoiceInputGain", "SetVoiceInputGain");
+    addSlider("Output Volume", "GetVoiceOutputGain", "SetVoiceOutputGain");
+    stage.appendChild(pop);
+
+    gear.addEventListener("click", function () {
+      var show = pop.style.display !== "block";
+      pop.style.display = show ? "block" : "none";
+      if (show) refreshers.forEach(function (f) { try { f(); } catch (e) {} });
+    });
   }
 
   function isVisible(el) {
