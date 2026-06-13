@@ -4,16 +4,19 @@ import shutil
 import Millennium  # provided by the Millennium runtime
 
 PLUGIN = "DiscordishChat"
-# Steam path is stable on this install; avoids depending on an uncertain API name.
+# Use fixed, known paths — Millennium's runtime sets __file__ oddly, so deriving
+# paths from os.path.dirname(__file__) is unreliable here.
 STEAMUI = os.path.expanduser("~/.local/share/Steam/steamui")
+SRC = os.path.expanduser(
+    "~/.local/share/millennium/plugins/discordish-chat/webkit/discordish.js"
+)
 
 
 def _deploy():
     """Copy our plain webkit JS into steamui so Millennium can inject it."""
-    src = os.path.join(os.path.dirname(__file__), "..", "webkit", "discordish.js")
     dst_dir = os.path.join(STEAMUI, PLUGIN)
     os.makedirs(dst_dir, exist_ok=True)
-    shutil.copy(src, os.path.join(dst_dir, "discordish.js"))
+    shutil.copy(SRC, os.path.join(dst_dir, "discordish.js"))
 
 
 class Plugin:
