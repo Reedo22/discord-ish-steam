@@ -24,8 +24,7 @@ that CSS can't do, so all of Steam's real voice/calling keeps working.
 Requires Millennium installed.
 
 ```bash
-./install.sh          # writes CSS to Millennium quickcss + installs the plugin
-./setup-autoupdate.sh # optional: daily auto-update via a systemd user timer
+./install.sh   # writes CSS to Millennium quickcss + installs the plugin
 ```
 
 Then restart Steam (`steam -shutdown` then relaunch). Make sure
@@ -33,9 +32,20 @@ Then restart Steam (`steam -shutdown` then relaunch). Make sure
 
 ## Update
 
+The plugin **auto-updates on every Steam boot** — its backend (`plugin/backend/main.py`)
+does a `git pull --ff-only` + refreshes quickcss in a background thread on load.
+You can also update manually any time:
+
 ```bash
 ./update.sh   # git pull + reinstall; restart Steam to apply
 ```
+
+## Windows (not done yet)
+
+The theme + plugin are OS-agnostic, but the install/update tooling is Linux-only
+(bash + `~/.local/share`, `~/.config/millennium` paths). A Windows installer
+(PowerShell targeting `%LOCALAPPDATA%\Millennium`) and a non-git update path for
+non-technical friends (the repo is private) are still TODO.
 
 ## How it works
 
