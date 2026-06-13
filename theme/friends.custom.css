@@ -127,6 +127,9 @@
 .ChatRoomMultiFriendAvatar .MultiAvatar { border-radius: 50% !important; }
 .createChatRoomButton, .ToggleGroupChatList { color: var(--dc-muted) !important; }
 
+/* hide the "No one else in this voice channel" sidebar notice */
+.emptyChannelNotice { display: none !important; }
+
 /* ---------- Search / add-friend ---------- */
 .socialTabContainer { background: var(--dc-sidebar) !important; }
 .tabLabel { color: var(--dc-bright) !important; }
