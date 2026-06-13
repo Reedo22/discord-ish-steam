@@ -44,9 +44,18 @@
 
   // Launch the screen-capture mirror as a non-Steam game so Steam can broadcast
   // it (= streaming a monitor/app; configured in ~/.config/discordish-capture.conf).
-  var CAPTURE_EXE = "/home/reedo/steam-reskin/stream-capture.sh";
+  // Capture is OS-specific. Linux = working; Windows = scaffold to finalize in a
+  // Windows session (real repo path + powershell invocation + ffmpeg/ffplay on PATH).
+  var IS_WIN = /win/i.test((window.navigator && (navigator.platform || navigator.userAgent)) || "");
+  var CAPTURE_EXE = IS_WIN
+    ? "C:\\Users\\Public\\discord-ish-steam\\stream-capture.ps1"  // TODO(win): real path + run via powershell
+    : "/home/reedo/steam-reskin/stream-capture.sh";
   // monitors (this machine): left DP-4 @0,0 ; right DP-0 @3840,0 (both 3840x2160)
-  var MONITORS = { left: "3840x2160+0+0", right: "3840x2160+3840+0" };
+  // Linux format = WxH+X+Y (x11grab). TODO(win): Windows gdigrab wants X,Y,W,H +
+  // the launchOpts format in streamScreen differs — finalize in a Windows session.
+  var MONITORS = IS_WIN
+    ? { left: "0,0,3840,2160", right: "3840,0,3840,2160" }
+    : { left: "3840x2160+0+0", right: "3840x2160+3840+0" };
   function streamScreen(opts) {
     // opts: { screen:'left'|'right', scale:'1920x1080'|'2560x1440'|'none', hidden:bool }
     try {

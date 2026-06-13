@@ -40,12 +40,21 @@ You can also update manually any time:
 ./update.sh   # git pull + reinstall; restart Steam to apply
 ```
 
-## Windows (not done yet)
+## Windows port — checklist (do in a Windows session)
 
-The theme + plugin are OS-agnostic, but the install/update tooling is Linux-only
-(bash + `~/.local/share`, `~/.config/millennium` paths). A Windows installer
-(PowerShell targeting `%LOCALAPPDATA%\Millennium`) and a non-git update path for
-non-technical friends (the repo is private) are still TODO.
+Most of the client is OS-agnostic (CSS theme + plugin: call UI, voice settings,
+broadcast invite all work once installed). What needs finishing on Windows:
+
+1. **Paths**: confirm Millennium's Windows dirs (quickcss / plugins / config.json —
+   likely under `%LOCALAPPDATA%\Millennium`). Fix `install.ps1` + the backend
+   `_paths()` Windows branch + `CAPTURE_EXE` in the plugin.
+2. **Install**: run/fix `install.ps1` (clone → quickcss → copy plugin → enable).
+3. **Screen capture**: `stream-capture.ps1` uses ffmpeg `gdigrab` (needs ffmpeg/
+   ffplay on PATH). Verify capture + the `MONITORS` coords + launchOpts format
+   (Windows uses `X,Y,W,H`; Linux uses `WxH+X+Y`) in `streamScreen()`.
+4. **Auto-update**: backend git-pull on boot — confirm git available + repo path.
+
+The repo is **public**, so cloning/auto-update works for friends.
 
 ## How it works
 
