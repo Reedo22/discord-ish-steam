@@ -255,120 +255,64 @@
 .chatTabList .Yd-DsWkYiFiYwpci--Yk_ > div > div + div[title="Close this tab"],
 .chatTabList .Yd-DsWkYiFiYwpci--Yk_ [title="Close this tab"] { display: none !important; }
 
-/* ===================== In-call (voice) UI — Discord-style ===================== */
-/* control bar: circular buttons, red leave */
-.activeVoiceButtons { gap: 8px !important; justify-content: center !important; align-items: center !important; }
-.VoiceControlPanelButton {
-  border-radius: 50% !important;
-  width: 42px !important; height: 42px !important;
-  background: var(--dc-raise) !important;
-  color: var(--dc-text) !important;
-  border: none !important;
-}
-.VoiceControlPanelButton:hover { background: var(--dc-hover) !important; }
-.VoiceControlPanelButton.chatEndVoiceChat { background: #f23f43 !important; }
-.VoiceControlPanelButton.chatEndVoiceChat:hover { background: #d83c3e !important; }
+/* ===================== Discord-style call (mirror of Steam's voice UI) ===================== */
+/* While in a call, hide Steam's original voice UI; we render our own clean tiles
+   + control buttons that proxy-click the (hidden, still-functional) originals. */
+html.discordish-incall .VoiceChannelParticipants,
+html.discordish-incall .activeVoiceButtons { position: absolute !important; left: -99999px !important; }
 
-/* participant tiles (avatar + name stacked, like a Discord voice channel) */
-.VoiceChannelParticipants { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; padding: 8px !important; }
-.VoiceChannelParticipants > div { display: contents !important; }
-.VoiceChannelParticipants .friend {
-  flex-direction: column !important;
-  align-items: center !important;
-  width: 80px !important;
-  height: auto !important;
-  min-height: 0 !important;
-  padding: 10px 6px !important;
-  margin: 0 !important;
-  border-radius: 10px !important;
-  background: var(--dc-darkest) !important;
-  text-align: center !important;
-}
-.VoiceChannelParticipants .avatarHolder { width: 52px !important; height: 52px !important; }
-.VoiceChannelParticipants .labelHolder { margin-top: 6px !important; }
-/* speaking ring */
-.VoiceChannelParticipants .friend.speaking .avatarHolder {
-  box-shadow: 0 0 0 3px var(--dc-online) !important;
-  border-radius: 50% !important;
-}
-/* muted mic indicator stays visible/red */
-.voicestatusIcon.voiceStatusMic.disabled { color: #f23f43 !important; }
-
-/* ===================== Center-stage call screen (Discord-style) ===================== */
-/* the stage overlays the main chat area while in a call (built by the plugin) */
-.ChatHistoryContainer { position: relative !important; }
 .discordish-stage {
-  position: absolute !important;
-  inset: 0 !important;
-  z-index: 5 !important;
+  position: absolute !important; inset: 0 !important; z-index: 5 !important;
   background: #232428 !important;
-  display: flex !important;
-  flex-direction: column !important;
-  align-items: center !important;
+  display: flex !important; flex-direction: column !important; align-items: center !important;
 }
 .discordish-tiles {
   flex: 1 1 auto !important;
-  display: flex !important;
-  flex-wrap: wrap !important;
-  align-content: center !important;
-  justify-content: center !important;
-  gap: 16px !important;
-  width: 100% !important;
-  padding: 24px !important;
-  box-sizing: border-box !important;
+  display: flex !important; flex-wrap: wrap !important;
+  align-content: center !important; justify-content: center !important;
+  gap: 16px !important; width: 100% !important; padding: 24px !important; box-sizing: border-box !important;
 }
-/* big participant tiles on the stage */
-.discordish-stage .VoiceChannelParticipants { display: contents !important; }
-.discordish-stage .VoiceChannelParticipants .friend {
-  width: 200px !important;
-  height: 150px !important;
-  background: #2b2d31 !important;
-  border-radius: 12px !important;
-  justify-content: center !important;
-  padding: 12px !important;
+.ds-tile {
+  position: relative !important;
+  width: 200px !important; height: 150px !important;
+  background: #2b2d31 !important; border-radius: 12px !important;
+  display: flex !important; flex-direction: column !important;
+  align-items: center !important; justify-content: center !important;
 }
-.discordish-stage .avatarHolder { width: 80px !important; height: 80px !important; }
-.discordish-stage .VoiceChannelParticipants .friend.speaking .avatarHolder {
-  box-shadow: 0 0 0 4px var(--dc-online) !important;
-}
-/* floating control bar at the bottom */
-.discordish-stage .activeVoiceButtons {
-  flex: 0 0 auto !important;
-  margin-bottom: 28px !important;
-  padding: 10px 18px !important;
-  background: #1e1f22 !important;
-  border-radius: 28px !important;
-}
+.ds-avatar { width: 80px !important; height: 80px !important; border-radius: 50% !important; background-size: cover !important; background-position: center !important; }
+.ds-tile.speaking .ds-avatar { box-shadow: 0 0 0 4px var(--dc-online) !important; }
+.ds-name { margin-top: 12px !important; color: var(--dc-text) !important; font-weight: 600 !important; }
+.ds-muted { position: absolute !important; top: 10px !important; right: 10px !important; width: 20px !important; height: 20px !important; border-radius: 50% !important; background: #f23f43 !important; }
+
+.ds-controls { display: flex !important; gap: 12px !important; margin-bottom: 28px !important; padding: 10px 18px !important; background: #1e1f22 !important; border-radius: 28px !important; }
+.ds-btn { width: 48px !important; height: 48px !important; border-radius: 50% !important; border: none !important; background: var(--dc-raise) !important; color: #fff !important; cursor: pointer !important; font-size: 20px !important; }
+.ds-btn:hover { background: var(--dc-hover) !important; }
+.ds-mic::after { content: "🎤"; }
+.ds-out::after { content: "🔊"; }
+.ds-leave { background: #f23f43 !important; }
+.ds-leave:hover { background: #d83c3e !important; }
+.ds-leave::after { content: "📞"; }
+
 /* minimize/expand toggle */
 .discordish-min-btn {
-  position: absolute !important;
-  top: 12px !important; right: 12px !important;
-  z-index: 6 !important;
-  width: 30px !important; height: 30px !important;
-  border-radius: 50% !important;
-  border: none !important;
-  background: rgba(0,0,0,.45) !important;
-  color: #fff !important;
-  font-size: 16px !important;
-  cursor: pointer !important;
+  position: absolute !important; top: 12px !important; right: 12px !important; z-index: 6 !important;
+  width: 30px !important; height: 30px !important; border-radius: 50% !important; border: none !important;
+  background: rgba(0,0,0,.45) !important; color: #fff !important; font-size: 16px !important; cursor: pointer !important;
 }
 .discordish-min-btn:hover { background: rgba(0,0,0,.7) !important; }
 
 /* minimized: small corner panel so the chat shows through */
 .discordish-stage.minimized {
   inset: auto 16px 16px auto !important;
-  width: 300px !important;
-  height: auto !important;
-  max-height: 240px !important;
-  border-radius: 12px !important;
-  box-shadow: 0 8px 24px rgba(0,0,0,.5) !important;
+  width: 300px !important; height: auto !important; max-height: 240px !important;
+  border-radius: 12px !important; box-shadow: 0 8px 24px rgba(0,0,0,.5) !important;
 }
 .discordish-stage.minimized .discordish-tiles { padding: 12px !important; gap: 8px !important; }
-.discordish-stage.minimized .VoiceChannelParticipants .friend { width: 72px !important; height: 84px !important; padding: 6px !important; }
-.discordish-stage.minimized .avatarHolder { width: 40px !important; height: 40px !important; }
-.discordish-stage.minimized .activeVoiceButtons { margin-bottom: 10px !important; padding: 6px 10px !important; }
-.discordish-stage.minimized .VoiceControlPanelButton { width: 34px !important; height: 34px !important; }
-
+.discordish-stage.minimized .ds-tile { width: 76px !important; height: 76px !important; }
+.discordish-stage.minimized .ds-avatar { width: 42px !important; height: 42px !important; }
+.discordish-stage.minimized .ds-name { display: none !important; }
+.discordish-stage.minimized .ds-controls { margin-bottom: 10px !important; padding: 6px 10px !important; gap: 8px !important; }
+.discordish-stage.minimized .ds-btn { width: 36px !important; height: 36px !important; font-size: 16px !important; }
 /* ---------- Scrollbars ---------- */
 .chatHistoryScroll::-webkit-scrollbar,
 .FriendsListContent::-webkit-scrollbar { width: 8px !important; }
