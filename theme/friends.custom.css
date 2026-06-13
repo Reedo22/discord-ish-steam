@@ -44,9 +44,8 @@
 /* ---------- Roster header / current user ---------- */
 .friendListHeaderContainer { background: var(--dc-sidebar) !important; }
 .currentUserContainer {
-  background: var(--dc-darkest) !important;
-  border-radius: 8px !important;
-  margin: 6px 8px !important;
+  background: transparent !important;   /* regular sidebar grey, not a dark well */
+  margin: 2px 4px !important;
   padding: 4px 6px !important;
 }
 
