@@ -52,23 +52,36 @@
     stage.appendChild(bar);
   }
 
+  function isVisible(el) {
+    if (!el) return false;
+    var b = el.getBoundingClientRect();
+    return b.width > 0 && b.height > 0;
+  }
+
   function callStage(doc) {
     var src = doc.querySelector(".VoiceChannelParticipants");
     var hasControls = !!doc.querySelector(".activeVoiceButtons");
-    var wins = [].slice.call(doc.querySelectorAll(".chatWindow"));
-    var win = wins.filter(function (w) { return w.getBoundingClientRect().width > 0; })[0];
-    var main = win && win.querySelector(".ChatHistoryContainer");
-    var stage = doc.querySelector(".discordish-stage");
     var inCall = !!src && hasControls;
 
-    if (!inCall) {
-      doc.documentElement.classList.remove("discordish-incall");
-      if (stage) stage.remove();
-      return;
-    }
-    doc.documentElement.classList.add("discordish-incall"); // CSS hides Steam's originals
-    if (!main) return;
+    // Only show the stage when the VISIBLE chat is a named group (.namedGroup) —
+    // group voice channels live there; 1:1 DMs lack it. Steam's voice UI is
+    // global, so this is how we make the stage "disappear when in other chats".
+    var wins = [].slice.call(doc.querySelectorAll(".chatWindow"));
+    var win = wins.filter(function (w) { return w.getBoundingClientRect().width > 0; })[0];
+    var viewingGroup = !!win && win.classList.contains("namedGroup");
+    var main = win && win.querySelector(".ChatHistoryContainer");
+    var shouldShow = inCall && viewingGroup && !!main;
 
+    // Cleanup: drop every stage that isn't the intended one (fixes "stuck on the
+    // first DM" + stale duplicates across windows).
+    doc.querySelectorAll(".discordish-stage").forEach(function (s) {
+      if (!shouldShow || s.parentElement !== main) s.remove();
+    });
+    if (!inCall) doc.documentElement.classList.remove("discordish-incall");
+    if (!shouldShow) return;
+    doc.documentElement.classList.add("discordish-incall"); // CSS hides Steam's originals
+
+    var stage = main.querySelector(".discordish-stage");
     if (!stage) {
       stage = el(doc, "div", "discordish-stage");
       var btn = el(doc, "button", "discordish-min-btn");
