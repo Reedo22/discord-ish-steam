@@ -45,20 +45,31 @@
   // Launch the screen-capture mirror as a non-Steam game so Steam can broadcast
   // it (= streaming a monitor/app; configured in ~/.config/discordish-capture.conf).
   var CAPTURE_EXE = "/home/reedo/steam-reskin/stream-capture.sh";
-  function streamScreen() {
+  // monitors (this machine): left DP-4 @0,0 ; right DP-0 @3840,0 (both 3840x2160)
+  var MONITORS = { left: "3840x2160+0+0", right: "3840x2160+3840+0" };
+  function streamScreen(opts) {
+    // opts: { screen:'left'|'right', scale:'1920x1080'|'2560x1440'|'none', hidden:bool }
     try {
       var apps = window.SteamClient.Apps;
       var store = window.appStore;
+      var capGeom = MONITORS[opts.screen] || MONITORS.left;
+      // ffplay window goes on the OTHER monitor (or off-screen if hidden)
+      var viewLeft = opts.screen === "left" ? 3840 : 0;
+      if (opts.hidden) viewLeft = 9000; // off the visible desktop
+      var launchOpts = capGeom + " " + (opts.scale || "1920x1080") + " " + viewLeft + " 0";
       var launch = function (appid) {
-        var ov = store.GetAppOverviewByAppID(appid);
-        if (ov && ov.GetGameID) apps.RunGame(ov.GetGameID(), "", -1, 100);
+        try { apps.SetShortcutLaunchOptions(appid, launchOpts); } catch (e) {}
+        setTimeout(function () {
+          var ov = store.GetAppOverviewByAppID(appid);
+          if (ov && ov.GetGameID) apps.RunGame(ov.GetGameID(), "", -1, 100);
+        }, 350);
       };
       if (window.__ds_capture_appid && store.GetAppOverviewByAppID(window.__ds_capture_appid)) {
         launch(window.__ds_capture_appid);
       } else {
         apps.AddShortcut("Screen Stream", CAPTURE_EXE, "", CAPTURE_EXE).then(function (appid) {
           window.__ds_capture_appid = appid;
-          setTimeout(function () { launch(appid); }, 600);
+          launch(appid);
         });
       }
     } catch (e) {}
@@ -94,15 +105,25 @@
           row.appendChild(sp); row.appendChild(sel); menu.appendChild(row);
         };
 
-        var t = el(doc, "div", "ds-vs-title"); t.textContent = "Stream"; menu.appendChild(t);
-        streamSelect("Resolution", [["720p", [1280, 720]], ["1080p", [1920, 1080]]], function (wh) {
+        var t = el(doc, "div", "ds-vs-title"); t.textContent = "Broadcast"; menu.appendChild(t);
+        streamSelect("Resolution", [["720p", [1280, 720]], ["1080p", [1920, 1080]], ["1440p", [2560, 1440]], ["4K", [3840, 2160]]], function (wh) {
           setSetting("broadcast_output_width", wh[0]); setSetting("broadcast_output_height", wh[1]);
         });
-        streamSelect("Bitrate", [["Low", 2500], ["Medium", 5000], ["High", 8000]], function (kbps) {
+        streamSelect("Bitrate", [["Low", 2500], ["Medium", 5000], ["High", 8000], ["Max", 15000]], function (kbps) {
           setSetting("broadcast_bitrate", kbps);
         });
-        var ss = el(doc, "button", "ds-stream-go"); ss.textContent = "Stream Screen (capture)";
-        ss.addEventListener("click", function () { streamScreen(); });
+
+        var st = el(doc, "div", "ds-vs-title"); st.textContent = "Screen"; menu.appendChild(st);
+        var capOpts = { screen: "left", scale: "1920x1080", hidden: false };
+        streamSelect("Monitor", [["Left", "left"], ["Right", "right"]], function (v) { capOpts.screen = v; });
+        streamSelect("Capture", [["1080p", "1920x1080"], ["1440p", "2560x1440"], ["4K (native)", "none"]], function (v) { capOpts.scale = v; });
+        var hrow = el(doc, "label", "ds-vs-row");
+        var hsp = el(doc, "span", "ds-vs-label"); hsp.textContent = "Hide capture window";
+        var hcb = doc.createElement("input"); hcb.type = "checkbox"; hcb.className = "ds-vs-toggle";
+        hcb.addEventListener("change", function () { capOpts.hidden = hcb.checked; });
+        hrow.appendChild(hsp); hrow.appendChild(hcb); menu.appendChild(hrow);
+        var ss = el(doc, "button", "ds-stream-go"); ss.textContent = "Stream Screen";
+        ss.addEventListener("click", function () { streamScreen(capOpts); });
         menu.appendChild(ss);
         var stop = el(doc, "button", "ds-stream-stop"); stop.textContent = "Stop screen stream";
         stop.addEventListener("click", function () { stopStreamScreen(); });
