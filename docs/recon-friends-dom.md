@@ -5,13 +5,16 @@ of both windows. Steam build id: 1780352834.
 
 ## Architectural findings (these change the design — see design-impact section)
 
-1. **Roster and chats are SEPARATE CEF windows.**
-   - `Friends List` window = the roster.
-   - Each open conversation is its own window (e.g. `John Mantle Holder`), with
-     in-window **chat tabs** (`.ChatTabs`, `.multiChatDialog`) so multiple chats
-     can tab inside one chat window.
-   - There is no native single-window "sidebar + chat" (Discord) layout in the
-     current state. CSS cannot merge two OS windows into one.
+0. **RESOLVED: native single-window mode exists — enable "Dock chats to the
+   friends list".** Steam ships a docked/combined mode (`bSingleWindowMode`,
+   loc key `FriendSettings_DockChats`, command `ToggleDockedMode`). When on, the
+   window root gains `.singlewindow` and the roster + chat live in ONE window.
+   This is the layout the theme targets. **The theme assumes docked mode is on.**
+
+1. **Without docking, roster and chats are SEPARATE CEF windows** (`Friends List`
+   plus one window per conversation, with in-window `.ChatTabs`). CSS cannot
+   merge separate OS windows — which is why we rely on the native docked mode
+   above instead.
 
 2. **No persistent call/screenshare buttons.**
    - In a DM the only voice control is `.VoiceToggle` ("Send a voice request")
@@ -67,6 +70,39 @@ of both windows. Steam build id: 1780352834.
 | Voice request toggle        | `.VoiceToggle`                    | title="Send a voice request"; the only call control in DM |
 | Voice entry container       | `.ChatMessageEntryVoice`          | `.Inactive` when no call |
 | Add-to-group button         | `.inviteAnotherFriendButton`      | |
+
+## Docked single-window layout (what the theme targets)
+
+Window title becomes `Friends List - <friend>`; root is `.chat.fullheight.singlewindow`.
+
+```
+.chat.singlewindow
+ .chat.displayRow
+  .friendsListContainer            LEFT rail (roster) — give it a fixed width + sidebar bg
+   .friendlist
+    .friendListHeaderContainer     header / title bar
+     .friendListCollapse           collapse-rail button (Discord-like)
+     .currentUserContainer.online  your avatar + name + status
+     .quickAccessFriends           favorites strip
+     .socialTabContainer           Friends tab + .searchIconButton + .addFriendButton
+    .FriendsListContent
+     .friendlistListContainer
+      .friendGroup (.gameGroup / .onlineFriends / .offlineFriends)
+       .groupName / .groupCount     group header
+       .friend (.online/.offline/.ingame/.awayOrSnooze)
+        .avatarHolder (.avatar img, .avatarStatus)
+        .labelHolder → .playerName-ish name div + status sub-text
+  .chatDialogs                     RIGHT pane (chat) — flex:1, main bg
+   .chatWindow
+    .chatHeader                    EMPTY — usable as a header insertion point
+    .ChatRoomGroup
+     .chatBody → .chatHistoryScroll → .chatHistory (.msg)
+     .chatEntry                    composer: textarea + submit + emoticon + .VoiceToggle
+```
+
+Status colors today come from Steam vars (online green `rgb(145,194,87)`, etc.)
+keyed off `.friend.online/.ingame/.offline`. Override per-state on `.friend` and
+`.avatarStatus`.
 
 ## Screenshare relocation finding
 - The screenshare button does not exist in the DM DOM at rest. It appears only

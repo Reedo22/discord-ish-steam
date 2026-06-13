@@ -23,6 +23,23 @@ reimplementing or replacing any of the parts that already work well.
 We are strictly restyling the web UI. Nothing we build touches the network or
 the call/video pipeline.
 
+## Revision (2026-06-13, post-recon)
+
+Live CEF recon changed two assumptions:
+
+1. **Single-window Discord layout is a native Steam feature.** Enabling "Dock
+   chats to the friends list" (`bSingleWindowMode`) puts the roster and the open
+   chat in ONE window (`.singlewindow`). The theme targets this docked window —
+   no window-merging hacks needed. **Docked mode being on is a prerequisite.**
+2. **There is no persistent call/screenshare button to promote.** In a DM the
+   only voice control is a "Send a voice request" toggle (`.VoiceToggle`) in the
+   composer; screenshare appears only during a live call. So promoting
+   call/screenshare to a header is **descoped from v1**; we restyle the voice
+   toggle and revisit in-call controls later (needs a live-call recon).
+
+Confirmed selectors live in `docs/recon-friends-dom.md`. Class names are mostly
+stable and readable, so the restyle is low-risk.
+
 ## Approach (chosen)
 
 Build on **Millennium**, an existing, maintained theme + plugin loader for
