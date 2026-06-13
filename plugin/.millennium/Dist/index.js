@@ -108,6 +108,17 @@
         tiles.appendChild(tile);
       });
     }
+
+    // sync control icons from Steam's real SVGs (also reflects mute/deafen state)
+    stage.querySelectorAll(".ds-btn").forEach(function (b) {
+      var sel = b.dataset.src;
+      var orig = doc.querySelector(".activeVoiceButtons " + sel) || doc.querySelector(sel);
+      var svg = orig && orig.querySelector("svg");
+      if (svg && b.dataset.icon !== svg.outerHTML) {
+        b.dataset.icon = svg.outerHTML;
+        b.innerHTML = svg.outerHTML;
+      }
+    });
   }
 
   function tick() {
