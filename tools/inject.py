@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
 """Inject (or refresh) theme/friends.custom.css into the live docked window
 for instant preview. Bakes nothing — just a <style id=reskin-preview> tag."""
-import sys, json, asyncio, urllib.request, pathlib
+import sys, json, asyncio, urllib.request, pathlib, subprocess, re
 import websockets
 
-PORT = 36377
+def _detect_port():
+    try:
+        out = subprocess.check_output(["pgrep", "-af", "steamwebhelper"], text=True)
+        m = re.search(r"remote-debugging-port=(\d+)", out)
+        if m:
+            return int(m.group(1))
+    except Exception:
+        pass
+    return 36377
+
+PORT = _detect_port()
 TITLE_SUBSTR = sys.argv[1] if len(sys.argv) > 1 else "Friends List -"
 CSS = pathlib.Path(__file__).resolve().parent.parent / "theme" / "friends.custom.css"
 

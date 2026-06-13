@@ -137,9 +137,18 @@
 
 /* ---------- Composer ---------- */
 .chatEntry { background: var(--dc-bg) !important; padding: 0 16px 16px !important; }
-/* kill the near-black wrapper that shows through the input's rounded corners */
+/* kill the near-black wrapper + the black inset shadow/gradients that show
+   through the input's rounded corners and clutter the composer */
 .chatEntry form,
 .chatEntry form > div { background: transparent !important; border: none !important; }
+.chatEntry,
+.chatEntry form,
+.chatEntry textarea,
+.chatEntry form > div,
+.chatEntry button {
+  box-shadow: none !important;
+  background-image: none !important;
+}
 .chatEntry textarea {
   background: var(--dc-raise) !important;
   color: var(--dc-text) !important;

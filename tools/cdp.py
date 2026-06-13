@@ -5,10 +5,20 @@ Usage:
   cdp.py list                       # list targets
   cdp.py eval <title-substr> <js>   # Runtime.evaluate JS in the matching target, print result
 """
-import sys, json, asyncio, urllib.request
+import sys, json, asyncio, urllib.request, subprocess, re
 import websockets
 
-PORT = 36377
+def _detect_port():
+    try:
+        out = subprocess.check_output(["pgrep", "-af", "steamwebhelper"], text=True)
+        m = re.search(r"remote-debugging-port=(\d+)", out)
+        if m:
+            return int(m.group(1))
+    except Exception:
+        pass
+    return 36377
+
+PORT = _detect_port()
 BASE = f"http://127.0.0.1:{PORT}"
 
 def targets():
