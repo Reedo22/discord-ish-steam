@@ -255,6 +255,45 @@
 .chatTabList .Yd-DsWkYiFiYwpci--Yk_ > div > div + div[title="Close this tab"],
 .chatTabList .Yd-DsWkYiFiYwpci--Yk_ [title="Close this tab"] { display: none !important; }
 
+/* ===================== In-call (voice) UI — Discord-style ===================== */
+/* control bar: circular buttons, red leave */
+.activeVoiceButtons { gap: 8px !important; justify-content: center !important; align-items: center !important; }
+.VoiceControlPanelButton {
+  border-radius: 50% !important;
+  width: 42px !important; height: 42px !important;
+  background: var(--dc-raise) !important;
+  color: var(--dc-text) !important;
+  border: none !important;
+}
+.VoiceControlPanelButton:hover { background: var(--dc-hover) !important; }
+.VoiceControlPanelButton.chatEndVoiceChat { background: #f23f43 !important; }
+.VoiceControlPanelButton.chatEndVoiceChat:hover { background: #d83c3e !important; }
+
+/* participant tiles (avatar + name stacked, like a Discord voice channel) */
+.VoiceChannelParticipants { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; padding: 8px !important; }
+.VoiceChannelParticipants > div { display: contents !important; }
+.VoiceChannelParticipants .friend {
+  flex-direction: column !important;
+  align-items: center !important;
+  width: 80px !important;
+  height: auto !important;
+  min-height: 0 !important;
+  padding: 10px 6px !important;
+  margin: 0 !important;
+  border-radius: 10px !important;
+  background: var(--dc-darkest) !important;
+  text-align: center !important;
+}
+.VoiceChannelParticipants .avatarHolder { width: 52px !important; height: 52px !important; }
+.VoiceChannelParticipants .labelHolder { margin-top: 6px !important; }
+/* speaking ring */
+.VoiceChannelParticipants .friend.speaking .avatarHolder {
+  box-shadow: 0 0 0 3px var(--dc-online) !important;
+  border-radius: 50% !important;
+}
+/* muted mic indicator stays visible/red */
+.voicestatusIcon.voiceStatusMic.disabled { color: #f23f43 !important; }
+
 /* ---------- Scrollbars ---------- */
 .chatHistoryScroll::-webkit-scrollbar,
 .FriendsListContent::-webkit-scrollbar { width: 8px !important; }

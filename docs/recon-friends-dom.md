@@ -104,6 +104,27 @@ Status colors today come from Steam vars (online green `rgb(145,194,87)`, etc.)
 keyed off `.friend.online/.ingame/.offline`. Override per-state on `.friend` and
 `.avatarStatus`.
 
+## In-call (voice) UI — captured live during a group voice channel
+
+Lives in the group's **details sidebar** (`detailsView` → `chatRoomVoiceChannel`,
+~252px wide), NOT a center stage. No screenshare control in group voice (Steam
+only offers screenshare in 1:1 calls / Remote Play).
+
+| Element                     | Selector                                   | Notes |
+|-----------------------------|--------------------------------------------|-------|
+| Control bar                 | `.activeVoiceButtons`                      | row of buttons |
+| Mute mic                    | `.VoiceControlPanelButton.ToggleMicrophoneButton` | title "Mute Microphone" |
+| Deafen (output)             | `.VoiceControlPanelButton.ToggleVoiceOutputButton` | title "Disable Incoming Audio" |
+| Leave call                  | `.VoiceControlPanelButton.chatEndVoiceChat`| title "Leave Voice Chat" |
+| Participant list            | `.VoiceChannelParticipants`                | compact list of `.friend` rows |
+| A participant               | `.VoiceChannelParticipants .friend`        | + `.speaking` when talking (ring hook) |
+| Per-participant voice icons | `.voiceStatusIconsContainer` / `.voicestatusIcon.voiceStatusMic.disabled` / `.voiceStatusOutput.disabled` | muted indicators |
+
+**Discord-copy status:** Phase 1 (done, CSS) = circular controls, red leave,
+avatar tiles, speaking ring, red muted-mic. Phase 2 (not done) = relocate/enlarge
+the voice panel into the main area as a center stage (needs JS via the plugin +
+g_PopupManager, like the voice-move).
+
 ## Screenshare relocation finding
 - The screenshare button does not exist in the DM DOM at rest. It appears only
   during an active voice call, in a voice/call panel not yet recon'd.
