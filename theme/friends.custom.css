@@ -149,6 +149,17 @@
   box-shadow: none !important;
   background-image: none !important;
 }
+/* make every composer/voice WRAPPER transparent + shadow-free so the round
+   buttons don't reveal a near-black box at their corners */
+.chatEntry [class*="compactableHeight"],
+.chatEntry [class*="compactableHeight"] > div,
+.ChatMessageEntryVoice,
+.ChatMessageEntryVoice .buttonsContainer {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+/* vertically center the composer row (input + buttons) */
+.chatEntry form { align-items: center !important; }
 .chatEntry textarea {
   background: var(--dc-raise) !important;
   color: var(--dc-text) !important;
@@ -171,16 +182,22 @@
 .chatEntry button[type=submit] .SVGIcon,
 .chatEntry button[type=submit] path { fill: #ffffff !important; color: #ffffff !important; }
 
-/* circular emoji + send-special icons */
+/* circular emoji + send-special icons (forced square so they're real circles) */
 .chatEntry button[title="Emoticon Picker"],
-.chatEntry button[title="Send Special"] {
+.chatEntry button[title="Send Special"],
+.chatHeader .VoiceToggle {
   border-radius: 50% !important;
   background: var(--dc-raise) !important;
-  width: 38px !important; height: 38px !important;
+  width: 40px !important; height: 40px !important;
+  min-width: 40px !important; min-height: 40px !important;
+  max-width: 40px !important; max-height: 40px !important;
+  flex: 0 0 40px !important;
   margin: 0 3px !important;
+  padding: 0 !important;
 }
 .chatEntry button[title="Emoticon Picker"]:hover,
-.chatEntry button[title="Send Special"]:hover { background: var(--dc-hover) !important; }
+.chatEntry button[title="Send Special"]:hover,
+.chatHeader .VoiceToggle:hover { background: var(--dc-hover) !important; }
 
 /* ---------- Top bar below friend header (populated by the JS plugin) ---------- */
 /* Only render as a bar once the plugin moves the voice control into it. */
