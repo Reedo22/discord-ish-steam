@@ -73,9 +73,27 @@
 .friend.ingame  .avatarStatus { background: var(--dc-accent)  !important; }
 .friend.offline .avatarStatus { background: var(--dc-offline) !important; }
 
-/* ---------- Group headers ---------- */
-.groupName, .groupCount { color: var(--dc-muted) !important; text-transform: uppercase; }
-.groupName { font-size: 11px !important; letter-spacing: .02em; }
+/* ---------- One merged friends list (no In-Game/Online/Offline sections) ---------- */
+/* Hide the group headers/dividers so everyone is one continuous list.
+   Per-person status is shown by the avatar dot (see status colors below). */
+.friendlistListContainer .groupHeaderContainer,
+.friendlistListContainer .groupName,
+.friendlistListContainer .friendGroup > .groupName,
+.friendlistListContainer .friendGroup hr { display: none !important; }
+/* collapse the group spacing so the rows butt together as one list */
+.friendlistListContainer .friendGroup,
+.friendlistListContainer .groupList,
+.friendlistListContainer .friendsContainer { margin: 0 !important; padding: 0 !important; }
+
+/* clean, slightly tighter rows */
+.friendlistListContainer .friend { padding: 4px 8px !important; margin: 0 6px !important; }
+
+/* clearer little status dot in the list */
+.friendlistListContainer .friend .avatarHolder .avatarStatus {
+  width: 11px !important; height: 11px !important;
+  border: 2px solid var(--dc-sidebar) !important;
+  bottom: 0 !important; right: 0 !important;
+}
 
 /* ---------- Search / add-friend ---------- */
 .socialTabContainer { background: var(--dc-sidebar) !important; }
