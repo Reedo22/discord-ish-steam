@@ -294,6 +294,81 @@
 /* muted mic indicator stays visible/red */
 .voicestatusIcon.voiceStatusMic.disabled { color: #f23f43 !important; }
 
+/* ===================== Center-stage call screen (Discord-style) ===================== */
+/* the stage overlays the main chat area while in a call (built by the plugin) */
+.ChatHistoryContainer { position: relative !important; }
+.discordish-stage {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 5 !important;
+  background: #232428 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+}
+.discordish-tiles {
+  flex: 1 1 auto !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-content: center !important;
+  justify-content: center !important;
+  gap: 16px !important;
+  width: 100% !important;
+  padding: 24px !important;
+  box-sizing: border-box !important;
+}
+/* big participant tiles on the stage */
+.discordish-stage .VoiceChannelParticipants { display: contents !important; }
+.discordish-stage .VoiceChannelParticipants .friend {
+  width: 200px !important;
+  height: 150px !important;
+  background: #2b2d31 !important;
+  border-radius: 12px !important;
+  justify-content: center !important;
+  padding: 12px !important;
+}
+.discordish-stage .avatarHolder { width: 80px !important; height: 80px !important; }
+.discordish-stage .VoiceChannelParticipants .friend.speaking .avatarHolder {
+  box-shadow: 0 0 0 4px var(--dc-online) !important;
+}
+/* floating control bar at the bottom */
+.discordish-stage .activeVoiceButtons {
+  flex: 0 0 auto !important;
+  margin-bottom: 28px !important;
+  padding: 10px 18px !important;
+  background: #1e1f22 !important;
+  border-radius: 28px !important;
+}
+/* minimize/expand toggle */
+.discordish-min-btn {
+  position: absolute !important;
+  top: 12px !important; right: 12px !important;
+  z-index: 6 !important;
+  width: 30px !important; height: 30px !important;
+  border-radius: 50% !important;
+  border: none !important;
+  background: rgba(0,0,0,.45) !important;
+  color: #fff !important;
+  font-size: 16px !important;
+  cursor: pointer !important;
+}
+.discordish-min-btn:hover { background: rgba(0,0,0,.7) !important; }
+
+/* minimized: small corner panel so the chat shows through */
+.discordish-stage.minimized {
+  inset: auto 16px 16px auto !important;
+  width: 300px !important;
+  height: auto !important;
+  max-height: 240px !important;
+  border-radius: 12px !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,.5) !important;
+}
+.discordish-stage.minimized .discordish-tiles { padding: 12px !important; gap: 8px !important; }
+.discordish-stage.minimized .VoiceChannelParticipants .friend { width: 72px !important; height: 84px !important; padding: 6px !important; }
+.discordish-stage.minimized .avatarHolder { width: 40px !important; height: 40px !important; }
+.discordish-stage.minimized .activeVoiceButtons { margin-bottom: 10px !important; padding: 6px 10px !important; }
+.discordish-stage.minimized .VoiceControlPanelButton { width: 34px !important; height: 34px !important; }
+
 /* ---------- Scrollbars ---------- */
 .chatHistoryScroll::-webkit-scrollbar,
 .FriendsListContent::-webkit-scrollbar { width: 8px !important; }
