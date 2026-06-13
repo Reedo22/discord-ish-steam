@@ -241,6 +241,12 @@
   background: var(--dc-accent) !important; color: #fff !important; font-weight: 600 !important; cursor: pointer !important;
 }
 .ds-stream-go:hover { filter: brightness(1.1) !important; }
+.ds-stream-stop {
+  width: 100% !important; margin-top: 6px !important; padding: 7px !important;
+  border: none !important; border-radius: 6px !important;
+  background: var(--dc-raise) !important; color: var(--dc-text) !important; cursor: pointer !important;
+}
+.ds-stream-stop:hover { background: #f23f43 !important; color: #fff !important; }
 
 /* voice toggle: circular wherever it sits */
 .VoiceToggle {

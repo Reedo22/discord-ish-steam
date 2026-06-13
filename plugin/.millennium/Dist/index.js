@@ -42,6 +42,34 @@
     } catch (e) {}
   }
 
+  // Launch the screen-capture mirror as a non-Steam game so Steam can broadcast
+  // it (= streaming a monitor/app; configured in ~/.config/discordish-capture.conf).
+  var CAPTURE_EXE = "/home/reedo/steam-reskin/stream-capture.sh";
+  function streamScreen() {
+    try {
+      var apps = window.SteamClient.Apps;
+      var store = window.appStore;
+      var launch = function (appid) {
+        var ov = store.GetAppOverviewByAppID(appid);
+        if (ov && ov.GetGameID) apps.RunGame(ov.GetGameID(), "", -1, 100);
+      };
+      if (window.__ds_capture_appid && store.GetAppOverviewByAppID(window.__ds_capture_appid)) {
+        launch(window.__ds_capture_appid);
+      } else {
+        apps.AddShortcut("Screen Stream", CAPTURE_EXE, "", CAPTURE_EXE).then(function (appid) {
+          window.__ds_capture_appid = appid;
+          setTimeout(function () { launch(appid); }, 600);
+        });
+      }
+    } catch (e) {}
+  }
+  function stopStreamScreen() {
+    try {
+      var apps = window.SteamClient.Apps;
+      if (window.__ds_capture_appid) { apps.RemoveShortcut(window.__ds_capture_appid); window.__ds_capture_appid = 0; }
+    } catch (e) {}
+  }
+
   function chatTweaks(doc) {
     doc.querySelectorAll(".chatWindow").forEach(function (win) {
       var header = win.querySelector(".chatHeader");
@@ -73,6 +101,12 @@
         streamSelect("Bitrate", [["Low", 2500], ["Medium", 5000], ["High", 8000]], function (kbps) {
           setSetting("broadcast_bitrate", kbps);
         });
+        var ss = el(doc, "button", "ds-stream-go"); ss.textContent = "Stream Screen (capture)";
+        ss.addEventListener("click", function () { streamScreen(); });
+        menu.appendChild(ss);
+        var stop = el(doc, "button", "ds-stream-stop"); stop.textContent = "Stop screen stream";
+        stop.addEventListener("click", function () { stopStreamScreen(); });
+        menu.appendChild(stop);
         var go = el(doc, "button", "ds-stream-go"); go.textContent = "Invite to watch";
         go.addEventListener("click", function () { inviteToWatch(doc); menu.style.display = "none"; });
         menu.appendChild(go);
