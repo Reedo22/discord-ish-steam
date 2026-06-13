@@ -137,6 +137,9 @@
 
 /* ---------- Composer ---------- */
 .chatEntry { background: var(--dc-bg) !important; padding: 0 16px 16px !important; }
+/* kill the near-black wrapper that shows through the input's rounded corners */
+.chatEntry form,
+.chatEntry form > div { background: transparent !important; border: none !important; }
 .chatEntry textarea {
   background: var(--dc-raise) !important;
   color: var(--dc-text) !important;
@@ -145,6 +148,19 @@
   padding: 11px 14px !important;
 }
 .chatEntry textarea::placeholder { color: var(--dc-muted) !important; }
+
+/* send button -> clean rounded blue */
+.chatEntry button[type=submit] {
+  background: var(--dc-accent) !important;
+  border: none !important;
+  border-radius: 8px !important;
+  margin-left: 6px !important;
+  width: 44px !important; height: 44px !important;
+}
+.chatEntry button[type=submit]:hover { filter: brightness(1.12) !important; }
+.chatEntry button[type=submit] svg,
+.chatEntry button[type=submit] .SVGIcon,
+.chatEntry button[type=submit] path { fill: #ffffff !important; color: #ffffff !important; }
 
 /* voice request toggle */
 .VoiceToggle { border-radius: 8px !important; color: var(--dc-text) !important; }
