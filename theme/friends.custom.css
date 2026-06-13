@@ -337,6 +337,7 @@ html.discordish-incall .voiceRoomDragBar {
 .ds-vs-row { display: flex !important; align-items: center !important; justify-content: space-between !important; padding: 6px 0 !important; color: var(--dc-text) !important; }
 .ds-vs-label { font-size: 13px !important; }
 .ds-vs-slider { width: 130px !important; accent-color: var(--dc-accent) !important; }
+.ds-vs-select { width: 150px !important; background: var(--dc-darkest) !important; color: var(--dc-text) !important; border: none !important; border-radius: 4px !important; padding: 3px 4px !important; font-size: 12px !important; }
 .ds-vs-toggle { width: 16px !important; height: 16px !important; accent-color: var(--dc-accent) !important; }
 
 /* minimize/expand toggle */

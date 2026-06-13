@@ -88,8 +88,30 @@
       });
       row.appendChild(sp); row.appendChild(sl); pop.appendChild(row);
     }
+    function addSelect(label, getter, setter, kind) {
+      var row = el(doc, "div", "ds-vs-row");
+      var sp = el(doc, "span", "ds-vs-label"); sp.textContent = label;
+      var sel = doc.createElement("select"); sel.className = "ds-vs-select";
+      sel.addEventListener("change", function () { var s = vcStore(); if (s) s[setter](sel.value); });
+      refreshers.push(function () {
+        var s = vcStore(); if (!s) return;
+        var cur = s[getter]();
+        navigator.mediaDevices.enumerateDevices().then(function (devs) {
+          sel.textContent = "";
+          devs.filter(function (d) { return d.kind === kind; }).forEach(function (d) {
+            var o = doc.createElement("option");
+            o.value = d.deviceId; o.textContent = d.label || d.deviceId;
+            if (d.deviceId === cur) o.selected = true;
+            sel.appendChild(o);
+          });
+        }).catch(function () {});
+      });
+      row.appendChild(sp); row.appendChild(sel); pop.appendChild(row);
+    }
     var title = el(doc, "div", "ds-vs-title"); title.textContent = "Voice Settings";
     pop.appendChild(title);
+    addSelect("Microphone", "GetSelectedMic", "SetSelectedMic", "audioinput");
+    addSelect("Speaker", "GetSelectedOutputDevice", "SetSelectedOutput", "audiooutput");
     addToggle("Noise Cancellation", "GetUseNoiseCancellation", "SetUseNoiseCancellation");
     addToggle("Echo Cancellation", "GetUseEchoCancellation", "SetUseEchoCancellation");
     addToggle("Auto Gain Control", "GetUseAutoGainControl", "SetUseAutoGainControl");
