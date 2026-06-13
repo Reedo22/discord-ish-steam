@@ -1,0 +1,109 @@
+/* === Discord-ish — Steam friends/chat reskin (docked single-window mode) ===
+   Targets the combined window (.chat.singlewindow): roster rail + chat pane.
+   Selectors confirmed live via CEF recon (see docs/recon-friends-dom.md). */
+
+/* ---------- Palette ---------- */
+:root {
+  --dc-sidebar: #2b2d31;   /* left roster rail */
+  --dc-bg:      #313338;   /* main chat area  */
+  --dc-darkest: #1e1f22;   /* wells, inputs, borders */
+  --dc-raise:   #383a40;   /* composer field */
+  --dc-text:    #dbdee1;
+  --dc-bright:  #f2f3f5;
+  --dc-muted:   #949ba4;
+  --dc-accent:  #5865f2;   /* blurple */
+  --dc-online:  #23a55a;
+  --dc-idle:    #f0b232;
+  --dc-offline: #80848e;
+  --dc-hover:   #35373c;
+}
+
+/* ---------- Layout shells / backgrounds ---------- */
+.chat.singlewindow,
+.chat.displayRow { background: var(--dc-bg) !important; }
+
+.friendsListContainer,
+.friendlist,
+.FriendsListContent,
+.friendlistListContainer {
+  background: var(--dc-sidebar) !important;
+}
+.friendsListContainer {
+  width: 280px !important;
+  min-width: 240px !important;
+  border-right: 1px solid var(--dc-darkest) !important;
+}
+
+.chatDialogs,
+.chatWindow,
+.chatBody,
+.ChatRoomGroup,
+.chatHistoryScroll,
+.chatHistory { background: var(--dc-bg) !important; }
+
+/* ---------- Roster header / current user ---------- */
+.friendListHeaderContainer { background: var(--dc-sidebar) !important; }
+.currentUserContainer {
+  background: var(--dc-darkest) !important;
+  border-radius: 8px !important;
+  margin: 6px 8px !important;
+  padding: 4px 6px !important;
+}
+
+/* ---------- Friend rows ---------- */
+.friend {
+  border-radius: 6px !important;
+  margin: 1px 8px !important;
+  padding: 3px 6px !important;
+  color: var(--dc-muted) !important;
+}
+.friend:hover { background: var(--dc-hover) !important; }
+.friend:hover .nOdcT-MoOaXGePXLyPe0H,
+.friend:hover .playerName { color: var(--dc-bright) !important; }
+
+/* names + status sub-text */
+.labelHolder .nOdcT-MoOaXGePXLyPe0H,
+.playerName { color: var(--dc-text) !important; font-weight: 600 !important; }
+.labelHolder ._2Ri005Wg_uXDTa71kdRbcN { color: var(--dc-muted) !important; }
+
+/* circular avatars + status ring */
+.avatarHolder, .avatar { border-radius: 50% !important; }
+.avatarStatus { border: 3px solid var(--dc-sidebar) !important; border-radius: 50% !important; }
+.friend.online  .avatarStatus { background: var(--dc-online)  !important; }
+.friend.ingame  .avatarStatus { background: var(--dc-accent)  !important; }
+.friend.offline .avatarStatus { background: var(--dc-offline) !important; }
+
+/* ---------- Group headers ---------- */
+.groupName, .groupCount { color: var(--dc-muted) !important; text-transform: uppercase; }
+.groupName { font-size: 11px !important; letter-spacing: .02em; }
+
+/* ---------- Search / add-friend ---------- */
+.socialTabContainer { background: var(--dc-sidebar) !important; }
+.tabLabel { color: var(--dc-bright) !important; }
+
+/* ---------- Chat history / messages ---------- */
+.chatHistory { padding: 8px 16px !important; }
+.msg { color: var(--dc-text) !important; line-height: 1.4 !important; }
+
+/* ---------- Composer ---------- */
+.chatEntry { background: var(--dc-bg) !important; padding: 0 16px 16px !important; }
+.chatEntry textarea {
+  background: var(--dc-raise) !important;
+  color: var(--dc-text) !important;
+  border: none !important;
+  border-radius: 8px !important;
+  padding: 11px 14px !important;
+}
+.chatEntry textarea::placeholder { color: var(--dc-muted) !important; }
+
+/* voice request toggle */
+.VoiceToggle { border-radius: 8px !important; color: var(--dc-text) !important; }
+.VoiceToggle:hover { background: var(--dc-hover) !important; }
+
+/* ---------- Scrollbars ---------- */
+.chatHistoryScroll::-webkit-scrollbar,
+.FriendsListContent::-webkit-scrollbar { width: 8px !important; }
+.chatHistoryScroll::-webkit-scrollbar-thumb,
+.FriendsListContent::-webkit-scrollbar-thumb {
+  background: var(--dc-darkest) !important; border-radius: 4px !important;
+}

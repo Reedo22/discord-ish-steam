@@ -1,0 +1,7 @@
+{
+  "name": "Discord-ish Chat",
+  "description": "Discord-style reskin of the Steam friends/chat window (docked mode).",
+  "author": "reedo",
+  "version": "0.1.0",
+  "UseDefaultPatches": true
+}
