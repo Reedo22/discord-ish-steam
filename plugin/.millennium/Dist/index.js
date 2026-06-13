@@ -113,7 +113,8 @@
         var tile = el(doc, "div", "ds-tile");
         var av = el(doc, "div", "ds-avatar");
         if (img && img.src) av.style.backgroundImage = "url(" + img.src + ")";
-        if (f.querySelector(".voiceStatusMic.disabled")) tile.appendChild(el(doc, "div", "ds-muted"));
+        // NOTE: no per-tile mute badge — ".voiceStatusMic.disabled" is present
+        // even when unmuted, so it's not a reliable mute indicator.
         var nm = el(doc, "div", "ds-name");
         nm.textContent = nameEl ? nameEl.textContent : "";
         tile.appendChild(av);
@@ -146,7 +147,7 @@
     });
   }
 
-  setInterval(tick, 500);
+  setInterval(tick, 150);  // snappier mute/deafen + speaking updates
   tick();
 })();
 
