@@ -95,6 +95,38 @@
   bottom: 0 !important; right: 0 !important;
 }
 
+/* ---------- Group chats pinned to top, shown as a list ---------- */
+.FriendsListContent { flex-direction: column !important; }
+.FriendsListChatSection {
+  order: -1 !important;                       /* move above the friends list */
+  border-bottom: 1px solid var(--dc-darkest) !important;
+  padding-bottom: 4px !important;
+}
+/* force the collapsed list open (Steam sets height:0 inline) */
+.FriendsListChatSection .chatRoomListContainer {
+  height: auto !important;
+  max-height: 38vh !important;
+  min-height: 0 !important;
+}
+/* section title as a clean uppercase label */
+.groupChatSectionTitle {
+  color: var(--dc-muted) !important;
+  font-size: 11px !important;
+  text-transform: uppercase;
+  letter-spacing: .02em;
+}
+/* group-chat rows styled like friend rows */
+.ChatRoomListGroupItem {
+  border-radius: 6px !important;
+  margin: 1px 6px !important;
+  padding: 4px 8px !important;
+  color: var(--dc-text) !important;
+}
+.ChatRoomListGroupItem:hover { background: var(--dc-hover) !important; }
+.chatRoomName { color: var(--dc-text) !important; font-weight: 600 !important; }
+.ChatRoomMultiFriendAvatar .MultiAvatar { border-radius: 50% !important; }
+.createChatRoomButton, .ToggleGroupChatList { color: var(--dc-muted) !important; }
+
 /* ---------- Search / add-friend ---------- */
 .socialTabContainer { background: var(--dc-sidebar) !important; }
 .tabLabel { color: var(--dc-bright) !important; }
