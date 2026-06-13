@@ -94,23 +94,23 @@
       main.appendChild(stage);
     }
 
-    // mirror participant tiles (rebuild from Steam's hidden list)
+    // mirror participant tiles from Steam's hidden list.
     var tiles = stage.querySelector(".discordish-tiles");
-    var sig = [];
     var src_friends = [].slice.call(src.querySelectorAll(".friend"));
-    src_friends.forEach(function (f) {
+    // STRUCTURAL signature only (names + mute) — NOT speaking, which toggles
+    // constantly and would rebuild (flicker) the whole tile set.
+    var sig = src_friends.map(function (f) {
       var nameEl = f.querySelector(".nOdcT-MoOaXGePXLyPe0H");
-      sig.push((nameEl ? nameEl.textContent : "?") + (f.classList.contains("speaking") ? "*" : "") +
-               (f.querySelector(".voiceStatusMic.disabled") ? "m" : ""));
-    });
-    var sigStr = sig.join("|");
-    if (tiles.dataset.sig !== sigStr) {
-      tiles.dataset.sig = sigStr;
+      return (nameEl ? nameEl.textContent : "?") +
+             (f.querySelector(".voiceStatusMic.disabled") ? "m" : "");
+    }).join("|");
+    if (tiles.dataset.sig !== sig) {
+      tiles.dataset.sig = sig;
       tiles.textContent = "";
       src_friends.forEach(function (f) {
         var nameEl = f.querySelector(".nOdcT-MoOaXGePXLyPe0H");
         var img = f.querySelector("img.avatar");
-        var tile = el(doc, "div", "ds-tile" + (f.classList.contains("speaking") ? " speaking" : ""));
+        var tile = el(doc, "div", "ds-tile");
         var av = el(doc, "div", "ds-avatar");
         if (img && img.src) av.style.backgroundImage = "url(" + img.src + ")";
         if (f.querySelector(".voiceStatusMic.disabled")) tile.appendChild(el(doc, "div", "ds-muted"));
@@ -120,6 +120,11 @@
         tile.appendChild(nm);
         tiles.appendChild(tile);
       });
+    }
+    // update speaking state IN PLACE every tick (no rebuild)
+    var tileEls = tiles.children;
+    for (var i = 0; i < tileEls.length && i < src_friends.length; i++) {
+      tileEls[i].classList.toggle("speaking", src_friends[i].classList.contains("speaking"));
     }
 
     // sync control icons from Steam's real SVGs (also reflects mute/deafen state)
