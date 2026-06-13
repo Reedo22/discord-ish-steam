@@ -171,8 +171,35 @@
 .chatEntry button[type=submit] .SVGIcon,
 .chatEntry button[type=submit] path { fill: #ffffff !important; color: #ffffff !important; }
 
-/* voice request toggle */
-.VoiceToggle { border-radius: 8px !important; color: var(--dc-text) !important; }
+/* circular emoji + send-special icons */
+.chatEntry button[title="Emoticon Picker"],
+.chatEntry button[title="Send Special"] {
+  border-radius: 50% !important;
+  background: var(--dc-raise) !important;
+  width: 38px !important; height: 38px !important;
+  margin: 0 3px !important;
+}
+.chatEntry button[title="Emoticon Picker"]:hover,
+.chatEntry button[title="Send Special"]:hover { background: var(--dc-hover) !important; }
+
+/* ---------- Top bar below friend header (populated by the JS plugin) ---------- */
+/* Only render as a bar once the plugin moves the voice control into it. */
+.chatHeader:not(:empty) {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  min-height: 44px !important;
+  padding: 0 14px !important;
+  background: var(--dc-bg) !important;
+  border-bottom: 1px solid var(--dc-darkest) !important;
+}
+/* voice toggle: circular wherever it sits */
+.VoiceToggle {
+  border-radius: 50% !important;
+  width: 36px !important; height: 36px !important;
+  color: var(--dc-text) !important;
+  background: var(--dc-raise) !important;
+}
 .VoiceToggle:hover { background: var(--dc-hover) !important; }
 
 /* ---------- Tab strip -> single chat header ---------- */

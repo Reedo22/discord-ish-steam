@@ -1,0 +1,7 @@
+{
+  "$schema": "https://raw.githubusercontent.com/SteamClientHomebrew/Millennium/main/src/sys/plugin-schema.json",
+  "name": "discordish-chat",
+  "common_name": "Discord-ish Chat Helper",
+  "description": "Moves the voice call control into a top bar and adds a message placeholder in the friends/chat window.",
+  "version": "0.1.0"
+}
