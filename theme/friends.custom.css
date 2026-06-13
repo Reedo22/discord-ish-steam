@@ -100,6 +100,32 @@
 .VoiceToggle { border-radius: 8px !important; color: var(--dc-text) !important; }
 .VoiceToggle:hover { background: var(--dc-hover) !important; }
 
+/* ---------- Tab strip -> single chat header ---------- */
+/* Roster (left rail) is the navigation. Instead of a row of tabs, show only the
+   ACTIVE conversation as a header so you can see which friend is open.
+   NOTE: ".Yd-DsWkYiFiYwpci--Yk_" is Steam's hashed "active tab" class and may
+   change on Steam updates; durable version = JS plugin writing into .chatHeader. */
+.chatTabList > div > div:not(.Yd-DsWkYiFiYwpci--Yk_) { display: none !important; }
+
+/* style the active tab as a clean header */
+.chatTabList .Yd-DsWkYiFiYwpci--Yk_ {
+  background: transparent !important;
+  padding: 4px 12px !important;
+}
+.chatTabList .Yd-DsWkYiFiYwpci--Yk_ .friend {
+  margin: 0 !important;
+  background: transparent !important;
+  pointer-events: none !important;        /* it's a label now, not a button */
+}
+.chatTabList .Yd-DsWkYiFiYwpci--Yk_ .nOdcT-MoOaXGePXLyPe0H {
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  color: var(--dc-bright) !important;
+}
+/* hide the per-tab close "x" on the header */
+.chatTabList .Yd-DsWkYiFiYwpci--Yk_ > div > div + div[title="Close this tab"],
+.chatTabList .Yd-DsWkYiFiYwpci--Yk_ [title="Close this tab"] { display: none !important; }
+
 /* ---------- Scrollbars ---------- */
 .chatHistoryScroll::-webkit-scrollbar,
 .FriendsListContent::-webkit-scrollbar { width: 8px !important; }
