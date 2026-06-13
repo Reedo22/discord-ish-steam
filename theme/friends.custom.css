@@ -158,14 +158,24 @@
   background: transparent !important;
   box-shadow: none !important;
 }
-/* vertically center the composer row (input + buttons) */
-.chatEntry form { align-items: center !important; }
+/* center + fill the composer row: full width, input grows, buttons at the edge */
+.chatEntry form {
+  align-items: center !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+.chatEntry textarea { flex: 1 1 auto !important; }
 .chatEntry textarea {
   background: var(--dc-raise) !important;
   color: var(--dc-text) !important;
   border: none !important;
   border-radius: 8px !important;
   padding: 11px 14px !important;
+  /* one-line resting height so the text is vertically centered (was rows=2) */
+  height: 22px !important;
+  min-height: 22px !important;
+  max-height: 120px !important;
+  overflow-y: auto !important;
 }
 .chatEntry textarea::placeholder { color: var(--dc-muted) !important; }
 
