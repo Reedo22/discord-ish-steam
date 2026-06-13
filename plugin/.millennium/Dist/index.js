@@ -170,19 +170,44 @@
     return b.width > 0 && b.height > 0;
   }
 
+  function activeOneOnOneAcct() {
+    var s = vcStore();
+    try { return s && s.GetActiveOneOnOneVoiceChatAccountID ? s.GetActiveOneOnOneVoiceChatAccountID() : 0; }
+    catch (e) { return 0; }
+  }
+
   function callStage(doc) {
-    var src = doc.querySelector(".VoiceChannelParticipants");
+    // participant source: 1:1 call members OR group voice-channel participants
+    // (both use the same .friend tile structure inside)
+    var src = doc.querySelector(".OneOnOneVoiceMembers") || doc.querySelector(".VoiceChannelParticipants");
     var hasControls = !!doc.querySelector(".activeVoiceButtons");
     var inCall = !!src && hasControls;
 
-    // Only show the stage when the VISIBLE chat is a named group (.namedGroup) —
-    // group voice channels live there; 1:1 DMs lack it. Steam's voice UI is
-    // global, so this is how we make the stage "disappear when in other chats".
     var wins = [].slice.call(doc.querySelectorAll(".chatWindow"));
     var win = wins.filter(function (w) { return w.getBoundingClientRect().width > 0; })[0];
-    var viewingGroup = !!win && win.classList.contains("namedGroup");
     var main = win && win.querySelector(".ChatHistoryContainer");
-    var shouldShow = inCall && viewingGroup && !!main;
+
+    // Show the stage ONLY in the chat that owns the active call:
+    //  - group call: visible window is the named group
+    //  - 1:1 call: visible DM's friend == the active 1:1 voice friend
+    var viewingCall = false;
+    if (win) {
+      if (win.classList.contains("namedGroup")) {
+        viewingCall = true;
+      } else {
+        var acct = activeOneOnOneAcct();
+        if (acct) {
+          var name = chatFriendName(doc).toLowerCase();
+          var fs = window.g_FriendsUIApp && window.g_FriendsUIApp.m_FriendStore;
+          var f = fs && fs.all_friends.find(function (x) {
+            var p = x.m_persona || {};
+            return [x.m_strNickname, p.m_strPlayerName].some(function (n) { return n && ("" + n).toLowerCase() === name; });
+          });
+          if (f && f.m_unAccountID === acct) viewingCall = true;
+        }
+      }
+    }
+    var shouldShow = inCall && viewingCall && !!main;
 
     // Cleanup: drop every stage that isn't the intended one (fixes "stuck on the
     // first DM" + stale duplicates across windows).

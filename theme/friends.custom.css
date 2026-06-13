@@ -276,6 +276,7 @@
    off-screen so the proxy controls still work) */
 html.discordish-incall .activeVoiceControls,
 html.discordish-incall .VoiceChannelParticipants,
+html.discordish-incall .OneOnOneVoiceRoomControls,
 html.discordish-incall .chatRoomVoiceChannel,
 html.discordish-incall .voiceRoomDragBar {
   position: absolute !important; left: -99999px !important; top: 0 !important;
