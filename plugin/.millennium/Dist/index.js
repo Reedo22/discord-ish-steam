@@ -47,14 +47,38 @@
       var header = win.querySelector(".chatHeader");
       var voice = win.querySelector(".ChatMessageEntryVoice");
       if (header && voice && !header.contains(voice)) header.appendChild(voice);
-      // screen-share (invite-to-watch) button in the chat header
-      if (header && !header.querySelector(".ds-share")) {
-        var sb = doc.createElement("button");
-        sb.className = "ds-share";
-        sb.title = "Share screen — invite this friend to watch your broadcast";
+      // screen-share / stream menu in the chat header
+      if (header && !header.querySelector(".ds-share-wrap")) {
+        var wrap = el(doc, "div", "ds-share-wrap");
+        var sb = el(doc, "button", "ds-share");
+        sb.title = "Stream — quality + invite to watch your broadcast";
         sb.textContent = "🖥";
-        sb.addEventListener("click", function () { inviteToWatch(doc); });
-        header.appendChild(sb);
+        var menu = el(doc, "div", "ds-stream-menu");
+        menu.style.display = "none";
+
+        var setSetting = function (k, v) { try { window.SteamClient.Settings.SetSetting(k, v); } catch (e) {} };
+        var streamSelect = function (label, opts, onPick) {
+          var row = el(doc, "div", "ds-vs-row");
+          var sp = el(doc, "span", "ds-vs-label"); sp.textContent = label;
+          var sel = el(doc, "select", "ds-vs-select");
+          opts.forEach(function (o, i) { var op = doc.createElement("option"); op.value = i; op.textContent = o[0]; sel.appendChild(op); });
+          sel.addEventListener("change", function () { onPick(opts[+sel.value][1]); });
+          row.appendChild(sp); row.appendChild(sel); menu.appendChild(row);
+        };
+
+        var t = el(doc, "div", "ds-vs-title"); t.textContent = "Stream"; menu.appendChild(t);
+        streamSelect("Resolution", [["720p", [1280, 720]], ["1080p", [1920, 1080]]], function (wh) {
+          setSetting("broadcast_output_width", wh[0]); setSetting("broadcast_output_height", wh[1]);
+        });
+        streamSelect("Bitrate", [["Low", 2500], ["Medium", 5000], ["High", 8000]], function (kbps) {
+          setSetting("broadcast_bitrate", kbps);
+        });
+        var go = el(doc, "button", "ds-stream-go"); go.textContent = "Invite to watch";
+        go.addEventListener("click", function () { inviteToWatch(doc); menu.style.display = "none"; });
+        menu.appendChild(go);
+
+        sb.addEventListener("click", function () { menu.style.display = menu.style.display === "none" ? "block" : "none"; });
+        wrap.appendChild(sb); wrap.appendChild(menu); header.appendChild(wrap);
       }
     });
     var name = chatFriendName(doc);

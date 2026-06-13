@@ -229,6 +229,18 @@
   font-size: 15px !important; cursor: pointer !important; margin-left: 8px !important;
 }
 .ds-share:hover { background: var(--dc-accent) !important; }
+.ds-share-wrap { position: relative !important; display: inline-flex !important; margin-left: 8px !important; }
+.ds-stream-menu {
+  position: absolute !important; top: calc(100% + 8px) !important; right: 0 !important; z-index: 20 !important;
+  width: 240px !important; background: #1e1f22 !important; border-radius: 10px !important;
+  padding: 12px 14px !important; box-shadow: 0 8px 24px rgba(0,0,0,.5) !important;
+}
+.ds-stream-go {
+  width: 100% !important; margin-top: 8px !important; padding: 8px !important;
+  border: none !important; border-radius: 6px !important;
+  background: var(--dc-accent) !important; color: #fff !important; font-weight: 600 !important; cursor: pointer !important;
+}
+.ds-stream-go:hover { filter: brightness(1.1) !important; }
 
 /* voice toggle: circular wherever it sits */
 .VoiceToggle {
