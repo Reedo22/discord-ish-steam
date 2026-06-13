@@ -42,30 +42,9 @@
 
   function buildControls(doc, stage) {
     var bar = el(doc, "div", "ds-controls");
-    [["mic", "Mute", ".ToggleMicrophoneButton"],
-     ["out", "Deafen", ".ToggleVoiceOutputButton"],
-     ["leave", "Leave", ".chatEndVoiceChat"]].forEach(function (spec) {
-      var b = el(doc, "button", "ds-btn ds-" + spec[0]);
-      b.title = spec[1];
-      b.dataset.src = spec[2];
-      b.addEventListener("click", function () {
-        var orig = doc.querySelector(".activeVoiceButtons " + spec[2]) || doc.querySelector(spec[2]);
-        if (orig) orig.click();
-      });
-      bar.appendChild(b);
-    });
-    // settings gear
-    var gear = el(doc, "button", "ds-btn ds-settings");
-    gear.title = "Voice settings";
-    gear.textContent = "⚙";
-    bar.appendChild(gear);
-    stage.appendChild(bar);
-
-    // voice-settings popover (drives g_FriendsUIApp.m_VoiceChatStore directly)
-    var pop = el(doc, "div", "ds-voice-settings");
-    pop.style.display = "none";
     var refreshers = [];
-    function addToggle(label, getter, setter) {
+
+    function addToggle(pop, label, getter, setter) {
       var row = el(doc, "label", "ds-vs-row");
       var sp = el(doc, "span", "ds-vs-label"); sp.textContent = label;
       var cb = doc.createElement("input"); cb.type = "checkbox"; cb.className = "ds-vs-toggle";
@@ -73,7 +52,7 @@
       refreshers.push(function () { var s = vcStore(); if (s) cb.checked = !!s[getter](); });
       row.appendChild(sp); row.appendChild(cb); pop.appendChild(row);
     }
-    function addSlider(label, getter, setter) {
+    function addSlider(pop, label, getter, setter) {
       var row = el(doc, "div", "ds-vs-row");
       var sp = el(doc, "span", "ds-vs-label"); sp.textContent = label;
       var sl = doc.createElement("input"); sl.type = "range"; sl.min = 0; sl.max = 100; sl.className = "ds-vs-slider";
@@ -88,7 +67,7 @@
       });
       row.appendChild(sp); row.appendChild(sl); pop.appendChild(row);
     }
-    function addSelect(label, getter, setter, kind) {
+    function addSelect(pop, label, getter, setter, kind) {
       var row = el(doc, "div", "ds-vs-row");
       var sp = el(doc, "span", "ds-vs-label"); sp.textContent = label;
       var sel = doc.createElement("select"); sel.className = "ds-vs-select";
@@ -108,22 +87,51 @@
       });
       row.appendChild(sp); row.appendChild(sel); pop.appendChild(row);
     }
-    var title = el(doc, "div", "ds-vs-title"); title.textContent = "Voice Settings";
-    pop.appendChild(title);
-    addSelect("Microphone", "GetSelectedMic", "SetSelectedMic", "audioinput");
-    addSelect("Speaker", "GetSelectedOutputDevice", "SetSelectedOutput", "audiooutput");
-    addToggle("Noise Cancellation", "GetUseNoiseCancellation", "SetUseNoiseCancellation");
-    addToggle("Echo Cancellation", "GetUseEchoCancellation", "SetUseEchoCancellation");
-    addToggle("Auto Gain Control", "GetUseAutoGainControl", "SetUseAutoGainControl");
-    addSlider("Input Volume", "GetVoiceInputGain", "SetVoiceInputGain");
-    addSlider("Output Volume", "GetVoiceOutputGain", "SetVoiceOutputGain");
-    stage.appendChild(pop);
 
-    gear.addEventListener("click", function () {
-      var show = pop.style.display !== "block";
-      pop.style.display = show ? "block" : "none";
-      if (show) refreshers.forEach(function (f) { try { f(); } catch (e) {} });
+    // a control = action button (mute/deafen/leave) + optional settings dropdown
+    function ctrlGroup(key, label, srcSel, buildPop) {
+      var group = el(doc, "div", "ds-ctrl-group");
+      var b = el(doc, "button", "ds-btn ds-" + key);
+      b.title = label; b.dataset.src = srcSel;
+      b.addEventListener("click", function () {
+        var orig = doc.querySelector(".activeVoiceButtons " + srcSel) || doc.querySelector(srcSel);
+        if (orig) orig.click();
+      });
+      group.appendChild(b);
+      if (buildPop) {
+        var pop = el(doc, "div", "ds-voice-settings");
+        pop.style.display = "none";
+        buildPop(pop);
+        group.appendChild(pop);
+        var caret = el(doc, "button", "ds-caret"); caret.textContent = "˅"; caret.title = label + " settings";
+        caret.addEventListener("click", function (e) {
+          e.stopPropagation();
+          [].forEach.call(stage.querySelectorAll(".ds-voice-settings"), function (p) { if (p !== pop) p.style.display = "none"; });
+          var show = pop.style.display !== "block";
+          pop.style.display = show ? "block" : "none";
+          if (show) refreshers.forEach(function (f) { try { f(); } catch (e) {} });
+        });
+        group.appendChild(caret);
+      }
+      bar.appendChild(group);
+    }
+
+    ctrlGroup("mic", "Mute", ".ToggleMicrophoneButton", function (pop) {
+      var t = el(doc, "div", "ds-vs-title"); t.textContent = "Microphone"; pop.appendChild(t);
+      addSelect(pop, "Device", "GetSelectedMic", "SetSelectedMic", "audioinput");
+      addSlider(pop, "Input Volume", "GetVoiceInputGain", "SetVoiceInputGain");
+      addToggle(pop, "Noise Cancellation", "GetUseNoiseCancellation", "SetUseNoiseCancellation");
+      addToggle(pop, "Echo Cancellation", "GetUseEchoCancellation", "SetUseEchoCancellation");
+      addToggle(pop, "Auto Gain Control", "GetUseAutoGainControl", "SetUseAutoGainControl");
     });
+    ctrlGroup("out", "Deafen", ".ToggleVoiceOutputButton", function (pop) {
+      var t = el(doc, "div", "ds-vs-title"); t.textContent = "Speaker"; pop.appendChild(t);
+      addSelect(pop, "Device", "GetSelectedOutputDevice", "SetSelectedOutput", "audiooutput");
+      addSlider(pop, "Output Volume", "GetVoiceOutputGain", "SetVoiceOutputGain");
+    });
+    ctrlGroup("leave", "Leave", ".chatEndVoiceChat", null);
+
+    stage.appendChild(bar);
   }
 
   function isVisible(el) {

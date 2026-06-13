@@ -320,12 +320,19 @@ html.discordish-incall .voiceRoomDragBar {
 .ds-btn svg { width: 22px !important; height: 22px !important; fill: #fff !important; }
 .ds-leave { background: #f23f43 !important; }
 .ds-leave:hover { background: #d83c3e !important; }
-.ds-settings { color: #fff !important; font-size: 20px !important; }
-
-/* voice-settings popover */
+/* per-control settings dropdown (mic / speaker) */
+.ds-ctrl-group { position: relative !important; display: flex !important; align-items: center !important; }
+.ds-caret {
+  position: absolute !important; top: -2px !important; right: -2px !important;
+  width: 18px !important; height: 18px !important; border-radius: 50% !important;
+  border: 2px solid #232428 !important; background: var(--dc-darkest) !important;
+  color: #fff !important; font-size: 10px !important; line-height: 1 !important;
+  cursor: pointer !important; z-index: 7 !important; padding: 0 !important;
+}
+.ds-caret:hover { background: var(--dc-accent) !important; }
 .ds-voice-settings {
   position: absolute !important;
-  bottom: 96px !important; left: 50% !important; transform: translateX(-50%) !important;
+  bottom: calc(100% + 12px) !important; left: 50% !important; transform: translateX(-50%) !important;
   z-index: 10 !important;
   width: 280px !important;
   background: #1e1f22 !important;
