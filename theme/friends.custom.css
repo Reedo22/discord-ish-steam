@@ -261,6 +261,10 @@
 /* ===================== Discord-style call (mirror of Steam's voice UI) ===================== */
 /* While in a call, hide Steam's original voice UI; we render our own clean tiles
    + control buttons that proxy-click the (hidden, still-functional) originals. */
+/* always hide Steam's green active-voice bar (the "weird green mic" top-left);
+   kept off-screen so our stage can still proxy-click its buttons */
+.activeVoiceControls { position: absolute !important; left: -99999px !important; top: 0 !important; }
+
 /* hide ALL of Steam's voice UI while our stage is up (kept in DOM + clickable
    off-screen so the proxy controls still work) */
 html.discordish-incall .activeVoiceControls,
