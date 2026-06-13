@@ -3,5 +3,8 @@
   "name": "discordish-chat",
   "common_name": "Discord-ish Chat Helper",
   "description": "Moves the voice call control into a top bar and adds a message placeholder in the friends/chat window.",
-  "version": "0.1.0"
+  "version": "0.2.0",
+  "include": [
+    "public/discordish.js"
+  ]
 }
