@@ -222,6 +222,14 @@
   background: var(--dc-bg) !important;
   border-bottom: 1px solid var(--dc-darkest) !important;
 }
+/* screen-share (invite-to-watch) button in the chat header */
+.ds-share {
+  width: 36px !important; height: 36px !important; border-radius: 8px !important;
+  border: none !important; background: var(--dc-raise) !important; color: #fff !important;
+  font-size: 15px !important; cursor: pointer !important; margin-left: 8px !important;
+}
+.ds-share:hover { background: var(--dc-accent) !important; }
+
 /* voice toggle: circular wherever it sits */
 .VoiceToggle {
   border-radius: 50% !important;

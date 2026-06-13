@@ -21,13 +21,43 @@
     return docs;
   }
 
+  function chatFriendName(doc) {
+    return ((doc.title || "").split(" - ")[1] || "").replace(/ \+ \d+ Chats?$/, "");
+  }
+
+  // Invite the friend you're chatting with to watch your broadcast (screen share).
+  // You start broadcasting (Go Live); this one click sends them the watch invite.
+  function inviteToWatch(doc) {
+    try {
+      var name = chatFriendName(doc).toLowerCase();
+      var fs = window.g_FriendsUIApp.m_FriendStore;
+      var f = fs.all_friends.find(function (x) {
+        var p = x.m_persona || {};
+        return [x.m_strNickname, p.m_strPlayerName].some(function (n) {
+          return n && ("" + n).toLowerCase() === name;
+        });
+      });
+      if (!f || !f.m_persona || !f.m_persona.m_steamid) return;
+      window.SteamClient.Broadcast.InviteToWatch(f.m_persona.m_steamid.ConvertTo64BitString());
+    } catch (e) {}
+  }
+
   function chatTweaks(doc) {
     doc.querySelectorAll(".chatWindow").forEach(function (win) {
       var header = win.querySelector(".chatHeader");
       var voice = win.querySelector(".ChatMessageEntryVoice");
       if (header && voice && !header.contains(voice)) header.appendChild(voice);
+      // screen-share (invite-to-watch) button in the chat header
+      if (header && !header.querySelector(".ds-share")) {
+        var sb = doc.createElement("button");
+        sb.className = "ds-share";
+        sb.title = "Share screen — invite this friend to watch your broadcast";
+        sb.textContent = "🖥";
+        sb.addEventListener("click", function () { inviteToWatch(doc); });
+        header.appendChild(sb);
+      }
     });
-    var name = ((doc.title || "").split(" - ")[1] || "").replace(/ \+ \d+ Chats?$/, "");
+    var name = chatFriendName(doc);
     doc.querySelectorAll(".chatEntry textarea").forEach(function (ta) {
       if (!ta.placeholder) ta.placeholder = name ? "Message " + name + "…" : "Message…";
     });
