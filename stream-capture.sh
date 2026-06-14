@@ -35,8 +35,8 @@ if [ -n "$INVITE" ] && [ -x "$RPW" ]; then
     while IFS='=' read -r k _; do
       case "$k" in Steam*|STEAM*|LD_PRELOAD|SDL_*) unset "$k" ;; esac
     done < <(env)
-    setsid "$RPW" -a 480 -i "$INVITE" \
-      || setsid "$RPW" --appimage-extract-and-run -a 480 -i "$INVITE"
+    setsid "$RPW" -v -a 480 -i "$INVITE" \
+      || setsid "$RPW" --appimage-extract-and-run -v -a 480 -i "$INVITE"
   ) >/tmp/rpw.log 2>&1 &
 elif [ -n "$INVITE" ]; then
   echo "RemotePlayWhatever not found at $RPW (run install.sh to fetch it)" >&2
