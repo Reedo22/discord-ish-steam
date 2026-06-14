@@ -46,8 +46,8 @@ $dest = Join-Path $pluginsDir "discordish-chat"
 if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
 Copy-Item (Join-Path $repo "plugin") $dest -Recurse -Force
 $idx = Join-Path $dest ".millennium\Dist\index.js"
-$ps1Path = (Join-Path $repo "stream-capture.ps1").Replace('\','\\')
-(Get-Content $idx -Raw).Replace('C:\\Users\\Public\\discord-ish-steam\\stream-capture.ps1', $ps1Path) |
+$launcher = (Join-Path $repo "rp-capture-launch.ps1").Replace('\','\\')
+(Get-Content $idx -Raw).Replace('C:\\Users\\reedo\\discord-ish-steam\\rp-capture-launch.ps1', $launcher) |
     Set-Content $idx -Encoding UTF8
 Write-Host "Installed plugin to $dest"
 
@@ -61,9 +61,35 @@ if ($enabled -notcontains "discordish-chat") {
     Write-Host "Enabled discordish-chat in config.json"
 } else { Write-Host "discordish-chat already enabled" }
 
-# 6) checks
+# 6) RemotePlayWhatever (forces the Remote Play session + invite on Windows)
+$bin = Join-Path $repo "bin"
+New-Item -ItemType Directory -Force -Path $bin | Out-Null
+$rpwExe = Get-ChildItem -Path $bin -Recurse -Filter "RemotePlayWhatever*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $rpwExe) {
+    $rpw7z = Join-Path $bin "RemotePlayWhatever.7z"
+    $rpwUrl = "https://github.com/m4dEngi/RemotePlayWhatever/releases/download/0.2.14-alpha/RemotePlayWhatever_0.2.14_1774231078.7z"
+    Write-Host "Fetching RemotePlayWhatever..."
+    try { Invoke-WebRequest -Uri $rpwUrl -OutFile $rpw7z -UseBasicParsing } catch { Write-Warning "couldn't download RemotePlayWhatever - place RemotePlayWhatever.exe in $bin manually." }
+    if (Test-Path $rpw7z) {
+        # Windows 10+ tar (bsdtar) can usually read .7z; else extract manually with 7-Zip.
+        & tar -xf $rpw7z -C $bin 2>$null
+        $rpwExe = Get-ChildItem -Path $bin -Recurse -Filter "RemotePlayWhatever*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+}
+# the launcher expects bin\RemotePlayWhatever.exe — normalise the name
+if ($rpwExe -and $rpwExe.Name -ne "RemotePlayWhatever.exe") {
+    Copy-Item $rpwExe.FullName (Join-Path $bin "RemotePlayWhatever.exe") -Force
+}
+if (-not (Test-Path (Join-Path $bin "RemotePlayWhatever.exe"))) {
+    Write-Warning "RemotePlayWhatever.exe not in $bin - extract the .7z there (7-Zip) so Remote Play can create the session."
+}
+
+# 7) checks
+if (-not (Get-Command python -ErrorAction SilentlyContinue) -and -not (Get-Command py -ErrorAction SilentlyContinue)) {
+    Write-Warning "Python not found - the screen-share capture server needs it. Install from python.org or 'winget install Python.Python.3'."
+}
 if (-not (Get-Command ffplay -ErrorAction SilentlyContinue)) {
-    Write-Warning "ffplay/ffmpeg not on PATH - the theme + calls + voice settings will work, but SCREEN CAPTURE streaming needs ffmpeg installed."
+    Write-Warning "ffplay/ffmpeg not on PATH - screen-share capture needs it ('winget install Gyan.FFmpeg'). Theme/calls/voice still work."
 }
 Write-Host ""
 Write-Host "DONE. Now: 1) fully restart Steam,  2) Friends settings -> enable 'Dock chats to the friends list'."

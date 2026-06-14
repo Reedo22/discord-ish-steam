@@ -49,8 +49,12 @@
   // never tracks it, so we catch the GroupCreated callback and invite with the
   // raw groupID immediately (idle groups disband within seconds otherwise).
   var SPACEWAR = "480";
-  var RPCAP = "/home/reedo/steam-reskin/rp-capture.py";   // our capture/control server
-  var RPCTL = "http://127.0.0.1:48591";                    // its localhost control API
+  var RPCAP = "/home/reedo/steam-reskin/rp-capture.py";   // our capture/control server (Linux path)
+  var RPCTL = "http://127.0.0.1:48591";                    // its localhost control API (both OSes)
+  // Windows: the plugin can't exec, so it launches the capture+RPW via a non-Steam
+  // shortcut running this PowerShell launcher (installer rewrites the path).
+  var WIN_POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+  var WIN_LAUNCHER = "C:\\Users\\reedo\\discord-ish-steam\\rp-capture-launch.ps1";
   function rpRaw() { return window.SteamClient && window.SteamClient.RemotePlay; }
 
   // Low-latency single-monitor (or single-app) Remote Play share. We hijack
@@ -64,16 +68,34 @@
     try {
       var sid = friendSteamID64(doc);
       if (!sid) { console.warn("[ds] RP: no friend for this chat"); return; }
-      if (IS_WIN) { console.warn("[ds] RP one-monitor capture is Linux-only for now"); return; }
-      var RP = rpRaw(), A = window.SteamClient.Apps;
-      if (!RP) { console.warn("[ds] RP: SteamClient.RemotePlay missing"); return; }
+      var A = window.SteamClient.Apps, store = window.appStore;
       var cap = window.__ds_capOpts || { screen: "primary", scale: "1920x1080" };
-      var geom = MONITORS[cap.screen] || MONITORS.primary;
       var res = (cap.scale && cap.scale !== "none") ? cap.scale : "none";
+      window.__ds_share_mode = "remoteplay";
+
+      if (IS_WIN) {
+        // Windows: launch the capture server + RemotePlayWhatever via a non-Steam
+        // shortcut. rp-capture.py runs RPW (-a 480 -i <sid>) to create the RPT
+        // session + invite; ffplay (gdigrab) shows the chosen monitor/app. The
+        // control server (localhost:48591) then drives live source/res switching.
+        var args = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + WIN_LAUNCHER + '" ' + cap.screen + " " + res + " " + sid;
+        var run = function (appid) {
+          try { A.SetShortcutLaunchOptions(appid, args); } catch (e) {}
+          setTimeout(function () { var ov = store.GetAppOverviewByAppID(appid); if (ov && ov.GetGameID) A.RunGame(ov.GetGameID(), "", -1, 100); }, 350);
+        };
+        if (window.__ds_capture_appid && store.GetAppOverviewByAppID(window.__ds_capture_appid)) { run(window.__ds_capture_appid); }
+        else { A.AddShortcut("Screen Stream", WIN_POWERSHELL, "", WIN_POWERSHELL).then(function (appid) { window.__ds_capture_appid = appid; run(appid); }); }
+        return;
+      }
+
+      // Linux: hijack Spacewar's launch to run our capture server, then invite via
+      // Steam's own RPT API the instant the 480 group appears.
+      var RP = rpRaw();
+      if (!RP) { console.warn("[ds] RP: SteamClient.RemotePlay missing"); return; }
+      var geom = MONITORS[cap.screen] || MONITORS.primary;
       var hijack = "bash -c 'exec python3 " + RPCAP + " " + geom + " " + res + "' %command%";
       try { A.ClearProton(480); } catch (e) {}                 // run our native server, not the Windows .exe
       try { A.SetAppLaunchOptions(480, hijack); } catch (e) {}
-
       var done = false, reg = null;
       var finish = function () { if (reg) { try { reg.unregister(); } catch (e) {} reg = null; } };
       reg = RP.RegisterForGroupCreated(function (groupID, hostSteam, gameid) {
@@ -84,16 +106,25 @@
         finish();
       });
       setTimeout(function () { if (!done) { finish(); console.warn("[ds] RP: Spacewar never created an RPT group (installed? launch-opts ok?)"); } }, 30000);
-      window.__ds_share_mode = "remoteplay";
       try { A.RunGame(SPACEWAR, "", -1, 100); } catch (e) { console.warn("[ds] launch Spacewar", e); }
     } catch (e) { console.warn("[ds] shareRP", e); }
   }
   function stopShareNative() {
-    var RP = rpRaw();
+    var RP = rpRaw(), A = window.SteamClient.Apps;
     try { if (window.__ds_rpt_groupid != null && RP && RP.CloseGroup) RP.CloseGroup(window.__ds_rpt_groupid); } catch (e) {}
     window.__ds_rpt_groupid = null;
-    try { window.SteamClient.Apps.TerminateApp(SPACEWAR, false); } catch (e) {}    // SIGTERMs rp-capture.py (stops ffplay)
-    try { window.SteamClient.Apps.SetAppLaunchOptions(480, ""); } catch (e) {}     // restore Spacewar's launch options
+    if (IS_WIN) {
+      // tear down the non-Steam capture shortcut (terminating it stops rp-capture.py + ffplay)
+      if (window.__ds_capture_appid) {
+        try { var ov = window.appStore.GetAppOverviewByAppID(window.__ds_capture_appid); if (ov && ov.GetGameID) A.TerminateApp(ov.GetGameID(), false); } catch (e) {}
+        try { A.RemoveShortcut(window.__ds_capture_appid); } catch (e) {}
+        window.__ds_capture_appid = 0;
+      }
+    } else {
+      try { A.TerminateApp(SPACEWAR, false); } catch (e) {}     // SIGTERMs rp-capture.py (stops ffplay)
+      try { A.SetAppLaunchOptions(480, ""); } catch (e) {}      // restore Spacewar's launch options
+    }
+    window.__ds_share_mode = null;
   }
   // Live control of the running capture server (switch source / resolution without
   // dropping the RPT session). Reachable because Chromium lets https pages fetch
@@ -105,8 +136,8 @@
   function rpSetSource(geom) {   // a monitor region
     fetch(RPCTL + "/set?geom=" + encodeURIComponent(geom) + "&res=" + encodeURIComponent(rpRes()), { cache: "no-store" }).catch(function () {});
   }
-  function rpSetWindow(xid) {     // a specific app window (occlusion-proof)
-    fetch(RPCTL + "/set?xid=" + encodeURIComponent(xid) + "&res=" + encodeURIComponent(rpRes()), { cache: "no-store" }).catch(function () {});
+  function rpSetWindow(id) {       // a specific app window (id = X11 xid on Linux, title on Windows)
+    fetch(RPCTL + "/set?win=" + encodeURIComponent(id) + "&res=" + encodeURIComponent(rpRes()), { cache: "no-store" }).catch(function () {});
   }
   function rpSetRes(res) {
     fetch(RPCTL + "/res?v=" + encodeURIComponent(res), { cache: "no-store" }).catch(function () {});
@@ -481,7 +512,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 10;
+  var VERSION = 11;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
