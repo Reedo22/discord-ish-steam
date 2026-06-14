@@ -404,3 +404,15 @@ html.discordish-incall .voiceRoomDragBar {
 .FriendsListContent::-webkit-scrollbar-thumb {
   background: var(--dc-darkest) !important; border-radius: 4px !important;
 }
+
+/* --- screen-share: live source/app switcher list --- */
+.ds-src-list {
+  display: flex; flex-direction: column; gap: 4px;
+  margin: 4px 0; max-height: 220px; overflow-y: auto;
+}
+.ds-src-item {
+  text-align: left; padding: 6px 8px; border-radius: 6px;
+  background: var(--ds-bg-3, #2b2d31); color: var(--ds-text, #dbdee1);
+  border: 1px solid transparent; font-size: 13px; cursor: pointer;
+}
+.ds-src-item:hover { background: var(--ds-accent, #5865f2); color: #fff; }

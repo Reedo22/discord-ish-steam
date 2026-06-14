@@ -59,12 +59,13 @@ command -v ffplay >/dev/null || echo "  ! ffplay (ffmpeg) not on PATH — needed
 # --- Spacewar-hider for the Remote Play share (xdotool watcher) ---
 # The Remote Play path uses Spacewar (480) as an invisible RPT anchor; this keeps
 # its window minimized so the whole-desktop stream doesn't show the demo.
-if ! command -v xdotool >/dev/null; then
-  echo "Installing xdotool (needs sudo)…"
-  if command -v apt-get >/dev/null; then sudo apt-get install -y xdotool || echo "  ! couldn't install xdotool — Remote Play will show the Spacewar window until it's installed." >&2
-  elif command -v pacman  >/dev/null; then sudo pacman -S --noconfirm xdotool || true
-  elif command -v dnf     >/dev/null; then sudo dnf install -y xdotool || true
-  else echo "  ! install xdotool with your package manager for the Remote Play window-hider." >&2; fi
+# xdotool = Spacewar window-hider; wmctrl = app list for the live "share an app" picker.
+if ! command -v xdotool >/dev/null || ! command -v wmctrl >/dev/null; then
+  echo "Installing xdotool + wmctrl (needs sudo)…"
+  if command -v apt-get >/dev/null; then sudo apt-get install -y xdotool wmctrl || echo "  ! couldn't install xdotool/wmctrl — Remote Play app-picker / window-hider need them." >&2
+  elif command -v pacman  >/dev/null; then sudo pacman -S --noconfirm xdotool wmctrl || true
+  elif command -v dnf     >/dev/null; then sudo dnf install -y xdotool wmctrl || true
+  else echo "  ! install xdotool + wmctrl with your package manager for the Remote Play helpers." >&2; fi
 fi
 # autostart on login (graphical session has DISPLAY), and start it now
 AUTOSTART="$HOME/.config/autostart"
