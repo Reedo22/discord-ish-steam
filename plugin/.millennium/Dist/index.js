@@ -212,7 +212,7 @@
           setSetting("broadcast_bitrate", kbps);
         });
 
-        var st = el(doc, "div", "ds-vs-title"); st.textContent = "Screen"; menu.appendChild(st);
+        var st = el(doc, "div", "ds-vs-title"); st.textContent = "Capture (Broadcast only)"; menu.appendChild(st);
         var capOpts = { screen: "primary", scale: "1920x1080", hidden: false };
         window.__ds_capOpts = capOpts; // so "Invite to watch" can reuse the current selection
         streamSelect("Monitor", [["Primary", "primary"], ["Secondary", "secondary"]], function (v) { capOpts.screen = v; });
@@ -226,24 +226,25 @@
         var status = el(doc, "div", "ds-vs-label ds-stream-status");
         var setStatus = function (t) { status.textContent = t; };
 
-        // Each button does start + the matching invite in one click, so it's always clear
-        // which request the friend receives (no hidden mode).
-        var bc = el(doc, "button", "ds-stream-go"); bc.textContent = "Broadcast to " + nm;
-        bc.title = "Steam broadcast of this screen — works for any friend, but ~7s delay";
+        // Two one-click shares; the labels spell out the (Linux) tradeoff so it's
+        // always clear what the friend gets. Broadcast = the chosen monitor only but
+        // ~7s delay; Remote Play = low latency but the whole desktop (all monitors).
+        var bc = el(doc, "button", "ds-stream-go"); bc.textContent = "Broadcast " + nm + " · 1 monitor, ~7s";
+        bc.title = "Broadcasts just the monitor picked above. Works for any friend, but ~7s delay.";
         bc.addEventListener("click", function () {
           window.__ds_share_mode = "broadcast";
           var sid = friendSteamID64(doc);
           streamScreen(capOpts);
           if (sid) { try { window.SteamClient.Broadcast.InviteToWatch(sid); } catch (e) {} }
-          setStatus("Sent " + nm + " a BROADCAST watch request (~7s delay).");
+          setStatus("Sent " + nm + " a BROADCAST watch request — monitor " + capOpts.screen + ", ~7s delay.");
         });
         menu.appendChild(bc);
 
-        var rp = el(doc, "button", "ds-stream-go"); rp.textContent = "Remote Play to " + nm;
-        rp.title = "Low-latency Remote Play Together share (streams your desktop via Steam's own RPT)";
+        var rp = el(doc, "button", "ds-stream-go"); rp.textContent = "Remote Play " + nm + " · whole screen, instant";
+        rp.title = "Low-latency Remote Play Together. Streams your WHOLE desktop (all monitors); the monitor picker above doesn't apply.";
         rp.addEventListener("click", function () {
           shareScreenNative(doc);
-          setStatus("Sent " + nm + " a REMOTE PLAY invite (low latency) — they need to accept.");
+          setStatus("Sent " + nm + " a REMOTE PLAY invite (low latency, whole screen) — they must accept.");
         });
         menu.appendChild(rp);
 
@@ -528,7 +529,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 5;
+  var VERSION = 6;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
