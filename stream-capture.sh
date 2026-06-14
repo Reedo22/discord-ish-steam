@@ -23,12 +23,21 @@ RPW="${RPW_APPIMAGE:-$HERE/bin/remoteplaywhatever-x86_64.AppImage}"
 WH="${CAP_GEOM%%+*}"
 REST="${CAP_GEOM#*+}"; X="${REST%%+*}"; Y="${REST#*+}"
 
-# 1) Send the Remote Play Together invite via RemotePlayWhatever (background; it
-#    talks to the running Steam client over IPC, hosts under AppID 480, and
-#    invites the friend). Skipped if no SteamID64 was passed.
+# 1) Send the Remote Play Together invite via RemotePlayWhatever. It must NOT
+#    inherit Steam's game-launch environment: because Steam started this script
+#    as a non-Steam game, SteamAppId/SteamGameId/etc. point at that shortcut, and
+#    RPW's own Steam-client init then gets "ConnectToGlobalUser: Steam denied
+#    appID …". So we strip every Steam*/overlay var (RPW locates Steam via $HOME,
+#    not these) and setsid it out of the game's process group.
+env | sort > /tmp/cap-env.txt   # diagnostics: the env Steam handed us
 if [ -n "$INVITE" ] && [ -x "$RPW" ]; then
-  ( "$RPW" -a 480 -i "$INVITE" \
-      || "$RPW" --appimage-extract-and-run -a 480 -i "$INVITE" ) >/tmp/rpw.log 2>&1 &
+  (
+    while IFS='=' read -r k _; do
+      case "$k" in Steam*|STEAM*|LD_PRELOAD|SDL_*) unset "$k" ;; esac
+    done < <(env)
+    setsid "$RPW" -a 480 -i "$INVITE" \
+      || setsid "$RPW" --appimage-extract-and-run -a 480 -i "$INVITE"
+  ) >/tmp/rpw.log 2>&1 &
 elif [ -n "$INVITE" ]; then
   echo "RemotePlayWhatever not found at $RPW (run install.sh to fetch it)" >&2
 fi
