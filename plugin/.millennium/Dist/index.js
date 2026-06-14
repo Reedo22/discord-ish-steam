@@ -101,10 +101,12 @@
   function rpSources(cb) {
     fetch(RPCTL + "/sources", { cache: "no-store" }).then(function (r) { return r.json(); }).then(cb).catch(function () { cb(null); });
   }
-  function rpSetSource(geom) {
-    var cap = window.__ds_capOpts || {};
-    var res = (cap.scale && cap.scale !== "none") ? cap.scale : "none";
-    fetch(RPCTL + "/set?geom=" + encodeURIComponent(geom) + "&res=" + encodeURIComponent(res), { cache: "no-store" }).catch(function () {});
+  function rpRes() { var c = window.__ds_capOpts || {}; return (c.scale && c.scale !== "none") ? c.scale : "none"; }
+  function rpSetSource(geom) {   // a monitor region
+    fetch(RPCTL + "/set?geom=" + encodeURIComponent(geom) + "&res=" + encodeURIComponent(rpRes()), { cache: "no-store" }).catch(function () {});
+  }
+  function rpSetWindow(xid) {     // a specific app window (occlusion-proof)
+    fetch(RPCTL + "/set?xid=" + encodeURIComponent(xid) + "&res=" + encodeURIComponent(rpRes()), { cache: "no-store" }).catch(function () {});
   }
   function rpSetRes(res) {
     fetch(RPCTL + "/res?v=" + encodeURIComponent(res), { cache: "no-store" }).catch(function () {});
@@ -169,7 +171,7 @@
             });
             (s.windows || []).forEach(function (w) {
               var b = el(doc, "button", "ds-src-item"); b.textContent = "🪟 " + (w.title.length > 32 ? w.title.slice(0, 32) + "…" : w.title);
-              b.addEventListener("click", function () { rpSetSource(w.w + "x" + w.h + "+" + w.x + "+" + w.y); setStatus("Now sharing app: " + w.title); });
+              b.addEventListener("click", function () { rpSetWindow(w.id); setStatus("Now sharing app: " + w.title); });
               srcWrap.appendChild(b);
             });
             if (!(s.windows || []).length) {
@@ -479,7 +481,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 9;
+  var VERSION = 10;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
