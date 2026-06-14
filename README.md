@@ -68,17 +68,22 @@ The repo is **public**, so cloning/auto-update works for friends.
 
 ## Screen sharing
 
-The 🖥 button in the chat header opens a stream menu:
+The 🖥 button in the chat header opens a stream menu with monitor + quality
+pickers and two one-click share buttons:
 
-- **Share my screen** (primary) — streams your whole desktop to the chat friend
-  over **Remote Play Together**. Steam will only stream a *game*, so it hosts a
-  throwaway RPT-capable game (Spacewar, appid 480 — install it once from your
-  library), flips that group to desktop streaming, and invites the friend. Much
-  lower latency than broadcast (no capture-window re-encode); the friend watches
-  your real screen, not Spacewar. **Stop sharing** ends the session and closes
-  Spacewar.
-- **Broadcast (fallback)** — Go Live + "Invite to watch", with resolution/bitrate
-  knobs. Use if Remote Play isn't available.
+- **Remote Play to \<friend\>** (low latency) — mirrors the chosen monitor into a
+  borderless capture window (`ffplay`/`gdigrab`) and uses
+  [RemotePlayWhatever](https://github.com/m4dEngi/RemotePlayWhatever) to host a
+  Remote Play Together session under Spacewar (AppID 480) and invite the friend.
+  Steam streams the capture window over RPT — much lower latency than broadcast,
+  and the friend doesn't need to own anything.
+- **Broadcast to \<friend\>** — same capture mirror, shared via Steam Broadcast
+  (Go Live + watch invite). Works for any friend but has ~7s delay.
+- **Stop sharing** — ends the RPT session (`CloseGroup`) and closes the capture.
+
+Requirements: `ffplay` (ffmpeg) on PATH, and RemotePlayWhatever — `install.sh`
+fetches the Linux AppImage into `bin/` automatically; on Windows install it and
+ensure `stream-capture.ps1` can find it.
 
 ## Notes / limits
 - Steam's voice UI is global (roster header), so the call stage is scoped to the
