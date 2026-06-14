@@ -25,69 +25,68 @@
     return ((doc.title || "").split(" - ")[1] || "").replace(/ \+ \d+ Chats?$/, "");
   }
 
-  // Invite the friend you're chatting with to watch your broadcast (screen share).
-  // You start broadcasting (Go Live); this one click sends them the watch invite.
-  function inviteToWatch(doc) {
+  // Find the friend object for the currently-open chat (matched by display name).
+  function chatFriend(doc) {
     try {
       var name = chatFriendName(doc).toLowerCase();
       var fs = window.g_FriendsUIApp.m_FriendStore;
-      var f = fs.all_friends.find(function (x) {
+      return fs.all_friends.find(function (x) {
         var p = x.m_persona || {};
         return [x.m_strNickname, p.m_strPlayerName].some(function (n) {
           return n && ("" + n).toLowerCase() === name;
         });
       });
+    } catch (e) { return null; }
+  }
+
+  // Invite the chat friend to watch your broadcast (Go Live). This is the
+  // fallback path — Remote Play screen sharing below is the primary option.
+  function inviteToWatch(doc) {
+    try {
+      var f = chatFriend(doc);
       if (!f || !f.m_persona || !f.m_persona.m_steamid) return;
       window.SteamClient.Broadcast.InviteToWatch(f.m_persona.m_steamid.ConvertTo64BitString());
     } catch (e) {}
   }
 
-  // Launch the screen-capture mirror as a non-Steam game so Steam can broadcast
-  // it (= streaming a monitor/app; configured in ~/.config/discordish-capture.conf).
-  // Capture is OS-specific. Linux = working; Windows = scaffold to finalize in a
-  // Windows session (real repo path + powershell invocation + ffmpeg/ffplay on PATH).
-  var IS_WIN = /win/i.test((window.navigator && (navigator.platform || navigator.userAgent)) || "");
-  var CAPTURE_EXE = IS_WIN
-    ? "C:\\Users\\Public\\discord-ish-steam\\stream-capture.ps1"  // TODO(win): real path + run via powershell
-    : "/home/reedo/steam-reskin/stream-capture.sh";
-  // monitors (this machine): left DP-4 @0,0 ; right DP-0 @3840,0 (both 3840x2160)
-  // Linux format = WxH+X+Y (x11grab). TODO(win): Windows gdigrab wants X,Y,W,H +
-  // the launchOpts format in streamScreen differs — finalize in a Windows session.
-  var MONITORS = IS_WIN
-    ? { left: "0,0,3840,2160", right: "3840,0,3840,2160" }
-    : { left: "3840x2160+0+0", right: "3840x2160+3840+0" };
-  function streamScreen(opts) {
-    // opts: { screen:'left'|'right', scale:'1920x1080'|'2560x1440'|'none', hidden:bool }
+  // --- Screen share via Remote Play Together (primary) -----------------------
+  // Steam only streams a *game*, and Remote Play Together lets a friend watch/
+  // join one without owning it. So we host a throwaway RPT-capable game
+  // (Spacewar, appid 480), flip its group to "stream the whole desktop", and
+  // invite the chat friend. Much lower latency than broadcast (no capture-window
+  // re-encode), and the friend sees your real screen — not Spacewar.
+  var SPACEWAR = "480";
+  function rpStore() { return window.g_FriendsUIApp && window.g_FriendsUIApp.RemotePlayStore; }
+  function shareScreenRP(doc) {
     try {
-      var apps = window.SteamClient.Apps;
-      var store = window.appStore;
-      var capGeom = MONITORS[opts.screen] || MONITORS.left;
-      // ffplay window goes on the OTHER monitor (or off-screen if hidden)
-      var viewLeft = opts.screen === "left" ? 3840 : 0;
-      if (opts.hidden) viewLeft = 9000; // off the visible desktop
-      var launchOpts = capGeom + " " + (opts.scale || "1920x1080") + " " + viewLeft + " 0";
-      var launch = function (appid) {
-        try { apps.SetShortcutLaunchOptions(appid, launchOpts); } catch (e) {}
-        setTimeout(function () {
-          var ov = store.GetAppOverviewByAppID(appid);
-          if (ov && ov.GetGameID) apps.RunGame(ov.GetGameID(), "", -1, 100);
-        }, 350);
+      var friend = chatFriend(doc);
+      if (!friend) { console.warn("[ds] screen-share: no friend for this chat"); return; }
+      var acct = friend.m_unAccountID;
+      var store = rpStore();
+      if (!store) { console.warn("[ds] screen-share: RemotePlayStore missing"); return; }
+      var invite = function () {
+        var g = store.GetGroupForHostedGameID(SPACEWAR);
+        if (!g) return false;
+        try { g.SetStreamingDesktopToRemotePlayTogetherEnabled(true); } catch (e) { console.warn("[ds] desktop-stream toggle", e); }
+        try { g.CreateInviteAndSession(acct); } catch (e) { console.warn("[ds] invite", e); }
+        window.__ds_rp_active = true;
+        return true;
       };
-      if (window.__ds_capture_appid && store.GetAppOverviewByAppID(window.__ds_capture_appid)) {
-        launch(window.__ds_capture_appid);
-      } else {
-        apps.AddShortcut("Screen Stream", CAPTURE_EXE, "", CAPTURE_EXE).then(function (appid) {
-          window.__ds_capture_appid = appid;
-          launch(appid);
-        });
-      }
-    } catch (e) {}
+      if (invite()) return;             // already hosting Spacewar
+      try { window.SteamClient.Apps.RunGame(SPACEWAR, "", -1, 100); } catch (e) { console.warn("[ds] launch Spacewar", e); }
+      var tries = 0;                     // wait for the RPT group to come up after launch
+      var iv = setInterval(function () {
+        if (invite() || ++tries > 40) {
+          clearInterval(iv);
+          if (tries > 40) console.warn("[ds] screen-share: RPT group never appeared (is Spacewar installed?)");
+        }
+      }, 500);
+    } catch (e) { console.warn("[ds] shareScreenRP", e); }
   }
-  function stopStreamScreen() {
-    try {
-      var apps = window.SteamClient.Apps;
-      if (window.__ds_capture_appid) { apps.RemoveShortcut(window.__ds_capture_appid); window.__ds_capture_appid = 0; }
-    } catch (e) {}
+  function stopShareRP() {
+    try { var s = rpStore(); if (s && s.CancelAllInvitesAndSessions) s.CancelAllInvitesAndSessions(); } catch (e) {}
+    try { window.SteamClient.Apps.TerminateApp(SPACEWAR, false); } catch (e) {}
+    window.__ds_rp_active = false;
   }
 
   function chatTweaks(doc) {
@@ -114,30 +113,25 @@
           row.appendChild(sp); row.appendChild(sel); menu.appendChild(row);
         };
 
-        var t = el(doc, "div", "ds-vs-title"); t.textContent = "Broadcast"; menu.appendChild(t);
+        // Primary: share your whole screen to the chat friend over Remote Play.
+        var st = el(doc, "div", "ds-vs-title"); st.textContent = "Screen share"; menu.appendChild(st);
+        var share = el(doc, "button", "ds-stream-go"); share.textContent = "Share my screen";
+        share.title = "Stream your desktop to this friend via Remote Play (low latency)";
+        share.addEventListener("click", function () { shareScreenRP(doc); menu.style.display = "none"; });
+        menu.appendChild(share);
+        var stop = el(doc, "button", "ds-stream-stop"); stop.textContent = "Stop sharing";
+        stop.addEventListener("click", function () { stopShareRP(); });
+        menu.appendChild(stop);
+
+        // Fallback: classic broadcast (Go Live) + watch invite, with quality knobs.
+        var t = el(doc, "div", "ds-vs-title"); t.textContent = "Broadcast (fallback)"; menu.appendChild(t);
         streamSelect("Resolution", [["720p", [1280, 720]], ["1080p", [1920, 1080]], ["1440p", [2560, 1440]], ["4K", [3840, 2160]]], function (wh) {
           setSetting("broadcast_output_width", wh[0]); setSetting("broadcast_output_height", wh[1]);
         });
         streamSelect("Bitrate", [["Low", 2500], ["Medium", 5000], ["High", 8000], ["Max", 15000]], function (kbps) {
           setSetting("broadcast_bitrate", kbps);
         });
-
-        var st = el(doc, "div", "ds-vs-title"); st.textContent = "Screen"; menu.appendChild(st);
-        var capOpts = { screen: "left", scale: "1920x1080", hidden: false };
-        streamSelect("Monitor", [["Left", "left"], ["Right", "right"]], function (v) { capOpts.screen = v; });
-        streamSelect("Capture", [["1080p", "1920x1080"], ["1440p", "2560x1440"], ["4K (native)", "none"]], function (v) { capOpts.scale = v; });
-        var hrow = el(doc, "label", "ds-vs-row");
-        var hsp = el(doc, "span", "ds-vs-label"); hsp.textContent = "Hide capture window";
-        var hcb = doc.createElement("input"); hcb.type = "checkbox"; hcb.className = "ds-vs-toggle";
-        hcb.addEventListener("change", function () { capOpts.hidden = hcb.checked; });
-        hrow.appendChild(hsp); hrow.appendChild(hcb); menu.appendChild(hrow);
-        var ss = el(doc, "button", "ds-stream-go"); ss.textContent = "Stream Screen";
-        ss.addEventListener("click", function () { streamScreen(capOpts); });
-        menu.appendChild(ss);
-        var stop = el(doc, "button", "ds-stream-stop"); stop.textContent = "Stop screen stream";
-        stop.addEventListener("click", function () { stopStreamScreen(); });
-        menu.appendChild(stop);
-        var go = el(doc, "button", "ds-stream-go"); go.textContent = "Invite to watch";
+        var go = el(doc, "button", "ds-stream-go"); go.textContent = "Invite to watch broadcast";
         go.addEventListener("click", function () { inviteToWatch(doc); menu.style.display = "none"; });
         menu.appendChild(go);
 
