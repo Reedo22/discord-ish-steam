@@ -66,10 +66,22 @@ The repo is **public**, so cloning/auto-update works for friends.
 - `tools/` — CDP helpers used during development to inspect/inject live.
 - `docs/` — design spec, implementation plan, and the live DOM recon notes.
 
-## Notes / limits
+## Screen sharing
 
-- Steam has **no screen sharing in DMs/chat** (only Remote Play / Broadcast game
-  streaming), so there's no screenshare control to add.
+The 🖥 button in the chat header opens a stream menu:
+
+- **Share my screen** (primary) — streams your whole desktop to the chat friend
+  over **Remote Play Together**. Steam will only stream a *game*, so it hosts a
+  throwaway RPT-capable game (Spacewar, appid 480 — install it once from your
+  library), flips that group to desktop streaming, and invites the friend. Much
+  lower latency than broadcast (no capture-window re-encode); the friend watches
+  your real screen, not Spacewar. **Stop sharing** ends the session and closes
+  Spacewar.
+- **Broadcast (fallback)** — Go Live + "Invite to watch", with resolution/bitrate
+  knobs. Use if Remote Play isn't available.
+
+## Notes / limits
 - Steam's voice UI is global (roster header), so the call stage is scoped to the
   named group you're viewing rather than bound to a single chat.
-- Windows installer for non-technical friends is not done yet (dev target is Linux).
+- Windows is supported via `install.ps1` (`irm …/install.ps1 | iex`); it
+  self-discovers the Millennium install. Dev target remains Linux.
