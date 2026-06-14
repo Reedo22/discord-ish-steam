@@ -56,4 +56,30 @@ if [[ ! -x "$RPW" ]]; then
 fi
 command -v ffplay >/dev/null || echo "  ! ffplay (ffmpeg) not on PATH — needed for the screen-capture mirror." >&2
 
+# --- Spacewar-hider for the Remote Play share (xdotool watcher) ---
+# The Remote Play path uses Spacewar (480) as an invisible RPT anchor; this keeps
+# its window minimized so the whole-desktop stream doesn't show the demo.
+if ! command -v xdotool >/dev/null; then
+  echo "Installing xdotool (needs sudo)…"
+  if command -v apt-get >/dev/null; then sudo apt-get install -y xdotool || echo "  ! couldn't install xdotool — Remote Play will show the Spacewar window until it's installed." >&2
+  elif command -v pacman  >/dev/null; then sudo pacman -S --noconfirm xdotool || true
+  elif command -v dnf     >/dev/null; then sudo dnf install -y xdotool || true
+  else echo "  ! install xdotool with your package manager for the Remote Play window-hider." >&2; fi
+fi
+# autostart on login (graphical session has DISPLAY), and start it now
+AUTOSTART="$HOME/.config/autostart"
+mkdir -p "$AUTOSTART"
+cat > "$AUTOSTART/discordish-rp-hide.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Discord-ish RP Spacewar hider
+Exec=$HERE/rp-hide-spacewar.sh
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
+EOF
+if command -v xdotool >/dev/null && ! pgrep -f "rp-hide-spacewar.sh" >/dev/null; then
+  nohup "$HERE/rp-hide-spacewar.sh" >/dev/null 2>&1 &
+  echo "Started Spacewar-hider watcher (autostarts on login)."
+fi
+
 echo "RESTART Steam to load the plugin + clean-boot the CSS."
