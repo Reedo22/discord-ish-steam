@@ -147,37 +147,59 @@
   // GroupCreated callback and invite with the raw groupID immediately.
   var SPACEWAR = "480";
   function rpRaw() { return window.SteamClient && window.SteamClient.RemotePlay; }
-  function ensureSpacewarProton() {
-    if (IS_WIN || window.__ds_spacewar_proton) return;
-    try { window.SteamClient.Apps.SpecifyCompatTool(480, "proton_experimental"); window.__ds_spacewar_proton = true; } catch (e) {}
-  }
-  function shareScreenNative(doc) {
+
+  // Start a Remote Play screen share hosted on Spacewar (480), inviting the chat
+  // friend the instant its RPT group appears (idle groups disband fast, and the
+  // JS store never tracks the group — so we grab the raw groupID from the
+  // GroupCreated callback). Two modes:
+  //   default        : run the real Spacewar (Proton on Linux) + stream the WHOLE
+  //                     desktop. Low latency, all monitors.
+  //   opts.oneMonitor: hijack 480's launch options so "launch Spacewar" actually
+  //                     runs our ffplay mirror of ONE chosen monitor, and DON'T
+  //                     enable desktop streaming — so RPT streams that game window
+  //                     (= the one monitor) at low latency. %command% (the real
+  //                     game) is handed to bash -c as ignored args, so it never runs.
+  function shareRP(doc, opts) {
     try {
+      opts = opts || {};
       var sid = friendSteamID64(doc);
       if (!sid) { console.warn("[ds] RP: no friend for this chat"); return; }
-      var RP = rpRaw();
+      var RP = rpRaw(), A = window.SteamClient.Apps;
       if (!RP) { console.warn("[ds] RP: SteamClient.RemotePlay missing"); return; }
+
+      if (opts.oneMonitor && !IS_WIN) {
+        var cap = window.__ds_capOpts || { screen: "primary", scale: "1920x1080" };
+        var geom = MONITORS[cap.screen] || MONITORS.primary;
+        var viewLeft = cap.screen === "primary" ? 3840 : 0;   // show the mirror on the OTHER monitor (avoid feedback)
+        var hijack = "bash -c 'exec " + CAPTURE_SCRIPT + " " + geom + " " + (cap.scale || "1920x1080") + " " + viewLeft + " 0' %command%";
+        try { A.ClearProton(480); } catch (e) {}               // run our native script, not the Windows .exe
+        try { A.SetAppLaunchOptions(480, hijack); } catch (e) {}
+      } else {
+        try { A.SetAppLaunchOptions(480, ""); } catch (e) {}   // run the real game
+        if (!IS_WIN) { try { A.SpecifyCompatTool(480, "proton_experimental"); } catch (e) {} }
+      }
+
       var done = false, reg = null;
       var finish = function () { if (reg) { try { reg.unregister(); } catch (e) {} reg = null; } };
       reg = RP.RegisterForGroupCreated(function (groupID, hostSteam, gameid) {
-        if (done || String(gameid) !== SPACEWAR) return;     // ignore unrelated groups
+        if (done || String(gameid) !== SPACEWAR) return;       // ignore unrelated groups
         done = true;
-        window.__ds_rpt_groupid = groupID;                   // so "Stop sharing" can CloseGroup
-        try { RP.SetStreamingDesktopToRemotePlayTogetherEnabled(groupID, true); } catch (e) { console.warn("[ds] desktop toggle", e); }
+        window.__ds_rpt_groupid = groupID;                     // so "Stop sharing" can CloseGroup
+        if (!opts.oneMonitor) { try { RP.SetStreamingDesktopToRemotePlayTogetherEnabled(groupID, true); } catch (e) { console.warn("[ds] desktop toggle", e); } }
         try { RP.CreateInviteAndSession(groupID, sid, false); } catch (e) { console.warn("[ds] invite", e); }
         finish();
       });
-      setTimeout(function () { if (!done) { finish(); console.warn("[ds] RP: Spacewar never created an RPT group (installed? Proton set?)"); } }, 30000);
-      ensureSpacewarProton();
+      setTimeout(function () { if (!done) { finish(); console.warn("[ds] RP: Spacewar never created an RPT group (installed? Proton/launch-opts set?)"); } }, 30000);
       window.__ds_share_mode = "remoteplay";
-      try { window.SteamClient.Apps.RunGame(SPACEWAR, "", -1, 100); } catch (e) { console.warn("[ds] launch Spacewar", e); }
-    } catch (e) { console.warn("[ds] shareScreenNative", e); }
+      try { A.RunGame(SPACEWAR, "", -1, 100); } catch (e) { console.warn("[ds] launch Spacewar", e); }
+    } catch (e) { console.warn("[ds] shareRP", e); }
   }
   function stopShareNative() {
     var RP = rpRaw();
     try { if (window.__ds_rpt_groupid != null && RP && RP.CloseGroup) RP.CloseGroup(window.__ds_rpt_groupid); } catch (e) {}
     window.__ds_rpt_groupid = null;
     try { window.SteamClient.Apps.TerminateApp(SPACEWAR, false); } catch (e) {}
+    try { window.SteamClient.Apps.SetAppLaunchOptions(480, ""); } catch (e) {}   // restore Spacewar's launch options
   }
 
   function chatTweaks(doc) {
@@ -243,10 +265,18 @@
         var rp = el(doc, "button", "ds-stream-go"); rp.textContent = "Remote Play " + nm + " · whole screen, instant";
         rp.title = "Low-latency Remote Play Together. Streams your WHOLE desktop (all monitors); the monitor picker above doesn't apply.";
         rp.addEventListener("click", function () {
-          shareScreenNative(doc);
+          shareRP(doc, {});
           setStatus("Sent " + nm + " a REMOTE PLAY invite (low latency, whole screen) — they must accept.");
         });
         menu.appendChild(rp);
+
+        var rp1 = el(doc, "button", "ds-stream-go"); rp1.textContent = "Remote Play " + nm + " · 1 monitor (beta)";
+        rp1.title = "Experimental: low latency AND one monitor — hijacks Spacewar's launch to stream just the picked monitor. Needs a friend to verify it captures.";
+        rp1.addEventListener("click", function () {
+          shareRP(doc, { oneMonitor: true });
+          setStatus("Sent " + nm + " a REMOTE PLAY invite (1 monitor, beta) — they must accept.");
+        });
+        menu.appendChild(rp1);
 
         var stop = el(doc, "button", "ds-stream-stop"); stop.textContent = "Stop sharing";
         stop.addEventListener("click", function () { stopShareNative(); stopStreamScreen(); setStatus("Stopped sharing."); });
@@ -529,7 +559,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 6;
+  var VERSION = 7;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
