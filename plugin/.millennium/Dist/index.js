@@ -52,41 +52,55 @@
   // --- Screen share via Remote Play Together (primary) -----------------------
   // Steam only streams a *game*, and Remote Play Together lets a friend watch/
   // join one without owning it. So we host a throwaway RPT-capable game
-  // (Spacewar, appid 480), flip its group to "stream the whole desktop", and
-  // invite the chat friend. Much lower latency than broadcast (no capture-window
-  // re-encode), and the friend sees your real screen — not Spacewar.
+  // (Spacewar, appid 480 — same trick RemotePlayWhatever uses), flip its group
+  // to "stream the whole desktop", and invite the chat friend. Much lower latency
+  // than broadcast (no capture-window re-encode); the friend sees your real
+  // screen, not Spacewar.
+  //
+  // Two things that bit us (verified live): (1) on Linux Spacewar ships only a
+  // Windows .exe, so it must run under Proton or it exits instantly; (2) an idle
+  // RPT group (created on launch, nobody invited) auto-disbands within seconds,
+  // and the JS RemotePlayStore never tracks it — so we must catch GroupCreated
+  // and invite *immediately* via the raw SteamClient.RemotePlay API + groupID.
   var SPACEWAR = "480";
+  var IS_WIN = /win/i.test((window.navigator && (navigator.platform || navigator.userAgent)) || "");
   function rpStore() { return window.g_FriendsUIApp && window.g_FriendsUIApp.RemotePlayStore; }
+  function rpRaw() { return window.SteamClient && window.SteamClient.RemotePlay; }
+  function ensureSpacewarProton() {
+    // Spacewar is Windows-only; force a Proton so it stays running on Linux.
+    if (IS_WIN || window.__ds_spacewar_proton) return;
+    try { window.SteamClient.Apps.SpecifyCompatTool(480, "proton_experimental"); window.__ds_spacewar_proton = true; } catch (e) {}
+  }
   function shareScreenRP(doc) {
     try {
       var friend = chatFriend(doc);
-      if (!friend) { console.warn("[ds] screen-share: no friend for this chat"); return; }
-      var acct = friend.m_unAccountID;
-      var store = rpStore();
-      if (!store) { console.warn("[ds] screen-share: RemotePlayStore missing"); return; }
-      var invite = function () {
-        var g = store.GetGroupForHostedGameID(SPACEWAR);
-        if (!g) return false;
-        try { g.SetStreamingDesktopToRemotePlayTogetherEnabled(true); } catch (e) { console.warn("[ds] desktop-stream toggle", e); }
-        try { g.CreateInviteAndSession(acct); } catch (e) { console.warn("[ds] invite", e); }
-        window.__ds_rp_active = true;
-        return true;
-      };
-      if (invite()) return;             // already hosting Spacewar
+      if (!friend || !friend.m_persona || !friend.m_persona.m_steamid) { console.warn("[ds] screen-share: no friend for this chat"); return; }
+      var steam64 = friend.m_persona.m_steamid.ConvertTo64BitString();
+      var RP = rpRaw();
+      if (!RP) { console.warn("[ds] screen-share: SteamClient.RemotePlay missing"); return; }
+
+      // Arm BEFORE launch: the group only lives for a few idle seconds, so we
+      // invite the instant Spacewar's launch creates it.
+      var done = false, reg = null;
+      var finish = function () { if (reg) { try { reg.unregister(); } catch (e) {} reg = null; } };
+      reg = RP.RegisterForGroupCreated(function (groupID, hostSteam, gameid) {
+        if (done || String(gameid) !== SPACEWAR) return;   // ignore unrelated groups
+        done = true;
+        window.__ds_rp_group = groupID;
+        try { RP.SetStreamingDesktopToRemotePlayTogetherEnabled(groupID, true); } catch (e) { console.warn("[ds] desktop-stream toggle", e); }
+        try { RP.CreateInviteAndSession(groupID, steam64, false); } catch (e) { console.warn("[ds] invite", e); }
+        finish();
+      });
+      setTimeout(function () { if (!done) { finish(); console.warn("[ds] screen-share: Spacewar never created an RPT group (installed? Proton set?)"); } }, 30000);
+
+      ensureSpacewarProton();
       try { window.SteamClient.Apps.RunGame(SPACEWAR, "", -1, 100); } catch (e) { console.warn("[ds] launch Spacewar", e); }
-      var tries = 0;                     // wait for the RPT group to come up after launch
-      var iv = setInterval(function () {
-        if (invite() || ++tries > 40) {
-          clearInterval(iv);
-          if (tries > 40) console.warn("[ds] screen-share: RPT group never appeared (is Spacewar installed?)");
-        }
-      }, 500);
     } catch (e) { console.warn("[ds] shareScreenRP", e); }
   }
   function stopShareRP() {
     try { var s = rpStore(); if (s && s.CancelAllInvitesAndSessions) s.CancelAllInvitesAndSessions(); } catch (e) {}
     try { window.SteamClient.Apps.TerminateApp(SPACEWAR, false); } catch (e) {}
-    window.__ds_rp_active = false;
+    window.__ds_rp_group = null;
   }
 
   function chatTweaks(doc) {
