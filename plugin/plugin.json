@@ -2,6 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/SteamClientHomebrew/Millennium/main/src/sys/plugin-schema.json",
   "name": "discordish-chat",
   "common_name": "Discord-ish Chat Helper",
-  "description": "Discord-style friends/chat: voice-to-header, placeholder, center-stage call UI + voice settings; auto-updates on boot.",
-  "version": "0.4.0"
+  "description": "Discord-style friends/chat: docked layout, voice-to-header, center-stage call UI + voice settings, screen share. Auto-updates from the repo (no backend).",
+  "version": "0.5.0",
+  "useBackend": false
 }

@@ -32,9 +32,14 @@ Then restart Steam (`steam -shutdown` then relaunch). Make sure
 
 ## Update
 
-The plugin **auto-updates on every Steam boot** — its backend (`plugin/backend/main.py`)
-does a `git pull --ff-only` + refreshes quickcss in a background thread on load.
-You can also update manually any time:
+The plugin **auto-updates on every Steam boot with no backend** — `index.js`
+fetches the latest CSS and the latest `index.js` from the repo on load, and runs
+the newer copy if its `VERSION` is higher than the bundled one (falling back to
+the bundled code if GitHub is unreachable). This replaced the old Python backend,
+which newer Millennium (Lua backends) rejects as outdated. `plugin.json` now sets
+`useBackend: false`, so the plugin loads on every Millennium version.
+
+You can also update the on-disk copy manually any time:
 
 ```bash
 ./update.sh   # git pull + reinstall; restart Steam to apply

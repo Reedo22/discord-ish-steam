@@ -508,18 +508,43 @@
     });
   }
 
-  // Track the Remote Play Together group id (first callback arg) so "Stop sharing"
-  // can CloseGroup() the session we host via RemotePlayWhatever.
-  try {
-    if (!window.__ds_rpt_reg && window.SteamClient && window.SteamClient.RemotePlay && window.SteamClient.RemotePlay.RegisterForGroupCreated) {
-      window.__ds_rpt_reg = window.SteamClient.RemotePlay.RegisterForGroupCreated(function (groupId) { window.__ds_rpt_groupid = groupId; });
-    }
-  } catch (e) {}
+  function init() {
+    // Track any RPT group id (first callback arg) so "Stop sharing" can CloseGroup()
+    // it — a fallback alongside shareScreenNative's own per-share capture.
+    try {
+      if (!window.__ds_rpt_reg && window.SteamClient && window.SteamClient.RemotePlay && window.SteamClient.RemotePlay.RegisterForGroupCreated) {
+        window.__ds_rpt_reg = window.SteamClient.RemotePlay.RegisterForGroupCreated(function (groupId) { window.__ds_rpt_groupid = groupId; });
+      }
+    } catch (e) {}
+    fetchCSS();                                 // refresh CSS from the repo on boot
+    setInterval(fetchCSS, 6 * 60 * 60 * 1000);  // and periodically during long sessions
+    setInterval(tick, 150);                     // snappier mute/deafen + speaking updates
+    tick();
+  }
 
-  fetchCSS();                                   // refresh CSS from the repo on boot
-  setInterval(fetchCSS, 6 * 60 * 60 * 1000);    // and periodically during long sessions
-  setInterval(tick, 150);                       // snappier mute/deafen + speaking updates
-  tick();
+  // Backend-free self-update: newer Millennium dropped Python backends (it uses Lua
+  // now), so this plugin ships useBackend:false and updates itself from the repo.
+  // CSS is refreshed by fetchCSS(); here we also fetch the latest index.js and, if its
+  // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
+  // `export default` first — eval rejects module syntax). init() runs only after this
+  // resolves, so we never double-initialise; falls back to bundled code if offline.
+  var VERSION = 5;
+  var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
+  if (!window.__DISCORDISH_BOOTED__) {
+    window.__DISCORDISH_BOOTED__ = true;
+    try {
+      fetch(JS_URL, { cache: "no-store" })
+        .then(function (r) { return r.ok ? r.text() : null; })
+        .then(function (src) {
+          var m = src && src.match(/var VERSION = (\d+)/);
+          if (m && +m[1] > VERSION) {
+            window.__DISCORDISH_BOOTED__ = false;            // let the newer copy boot itself
+            (0, eval)(src.replace(/export\s+default[\s\S]*$/, ""));
+          } else { init(); }
+        })
+        .catch(function () { init(); });
+    } catch (e) { init(); }
+  }
 })();
 
 export default function () {}
