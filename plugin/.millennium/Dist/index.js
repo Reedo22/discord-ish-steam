@@ -137,6 +137,49 @@
     } catch (e) {}
   }
 
+  // --- Native Remote Play Together (no RemotePlayWhatever, no capture window) --
+  // Uses Steam's OWN RPT API — the exact calls Steam's "Remote Play Together"
+  // button makes. Host Spacewar (480) so an RPT-eligible group is created, flip
+  // it to stream the whole desktop, and invite the friend. On Linux Spacewar
+  // ships only a Windows .exe, so force Proton or it exits instantly and the
+  // idle group disbands before we can invite. The group is created async, and
+  // RemotePlayStore.GetGroupForHostedGameID never tracks it, so we catch the
+  // GroupCreated callback and invite with the raw groupID immediately.
+  var SPACEWAR = "480";
+  function rpRaw() { return window.SteamClient && window.SteamClient.RemotePlay; }
+  function ensureSpacewarProton() {
+    if (IS_WIN || window.__ds_spacewar_proton) return;
+    try { window.SteamClient.Apps.SpecifyCompatTool(480, "proton_experimental"); window.__ds_spacewar_proton = true; } catch (e) {}
+  }
+  function shareScreenNative(doc) {
+    try {
+      var sid = friendSteamID64(doc);
+      if (!sid) { console.warn("[ds] RP: no friend for this chat"); return; }
+      var RP = rpRaw();
+      if (!RP) { console.warn("[ds] RP: SteamClient.RemotePlay missing"); return; }
+      var done = false, reg = null;
+      var finish = function () { if (reg) { try { reg.unregister(); } catch (e) {} reg = null; } };
+      reg = RP.RegisterForGroupCreated(function (groupID, hostSteam, gameid) {
+        if (done || String(gameid) !== SPACEWAR) return;     // ignore unrelated groups
+        done = true;
+        window.__ds_rpt_groupid = groupID;                   // so "Stop sharing" can CloseGroup
+        try { RP.SetStreamingDesktopToRemotePlayTogetherEnabled(groupID, true); } catch (e) { console.warn("[ds] desktop toggle", e); }
+        try { RP.CreateInviteAndSession(groupID, sid, false); } catch (e) { console.warn("[ds] invite", e); }
+        finish();
+      });
+      setTimeout(function () { if (!done) { finish(); console.warn("[ds] RP: Spacewar never created an RPT group (installed? Proton set?)"); } }, 30000);
+      ensureSpacewarProton();
+      window.__ds_share_mode = "remoteplay";
+      try { window.SteamClient.Apps.RunGame(SPACEWAR, "", -1, 100); } catch (e) { console.warn("[ds] launch Spacewar", e); }
+    } catch (e) { console.warn("[ds] shareScreenNative", e); }
+  }
+  function stopShareNative() {
+    var RP = rpRaw();
+    try { if (window.__ds_rpt_groupid != null && RP && RP.CloseGroup) RP.CloseGroup(window.__ds_rpt_groupid); } catch (e) {}
+    window.__ds_rpt_groupid = null;
+    try { window.SteamClient.Apps.TerminateApp(SPACEWAR, false); } catch (e) {}
+  }
+
   function chatTweaks(doc) {
     doc.querySelectorAll(".chatWindow").forEach(function (win) {
       var header = win.querySelector(".chatHeader");
@@ -197,16 +240,15 @@
         menu.appendChild(bc);
 
         var rp = el(doc, "button", "ds-stream-go"); rp.textContent = "Remote Play to " + nm;
-        rp.title = "Low-latency Remote Play Together share (needs RemotePlayWhatever)";
+        rp.title = "Low-latency Remote Play Together share (streams your desktop via Steam's own RPT)";
         rp.addEventListener("click", function () {
-          window.__ds_share_mode = "remoteplay";
-          streamScreen({ screen: capOpts.screen, scale: capOpts.scale, hidden: capOpts.hidden, invite: friendSteamID64(doc) });
-          setStatus("Sent " + nm + " a REMOTE PLAY invite (low latency).");
+          shareScreenNative(doc);
+          setStatus("Sent " + nm + " a REMOTE PLAY invite (low latency) — they need to accept.");
         });
         menu.appendChild(rp);
 
         var stop = el(doc, "button", "ds-stream-stop"); stop.textContent = "Stop sharing";
-        stop.addEventListener("click", function () { stopStreamScreen(); setStatus("Stopped sharing."); });
+        stop.addEventListener("click", function () { stopShareNative(); stopStreamScreen(); setStatus("Stopped sharing."); });
         menu.appendChild(stop);
         menu.appendChild(status);
 
