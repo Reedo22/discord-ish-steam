@@ -59,13 +59,14 @@ command -v ffplay >/dev/null || echo "  ! ffplay (ffmpeg) not on PATH — needed
 # --- Spacewar-hider for the Remote Play share (xdotool watcher) ---
 # The Remote Play path uses Spacewar (480) as an invisible RPT anchor; this keeps
 # its window minimized so the whole-desktop stream doesn't show the demo.
-# xdotool = Spacewar window-hider; wmctrl = app list for the live "share an app" picker.
-if ! command -v xdotool >/dev/null || ! command -v wmctrl >/dev/null; then
-  echo "Installing xdotool + wmctrl (needs sudo)…"
-  if command -v apt-get >/dev/null; then sudo apt-get install -y xdotool wmctrl || echo "  ! couldn't install xdotool/wmctrl — Remote Play app-picker / window-hider need them." >&2
-  elif command -v pacman  >/dev/null; then sudo pacman -S --noconfirm xdotool wmctrl || true
-  elif command -v dnf     >/dev/null; then sudo dnf install -y xdotool wmctrl || true
-  else echo "  ! install xdotool + wmctrl with your package manager for the Remote Play helpers." >&2; fi
+# Remote Play helpers: xdotool (Spacewar window-hider), wmctrl (app list),
+# gstreamer (occlusion-proof app capture via ximagesrc).
+if ! command -v xdotool >/dev/null || ! command -v wmctrl >/dev/null || ! command -v gst-launch-1.0 >/dev/null; then
+  echo "Installing xdotool + wmctrl + gstreamer (needs sudo)…"
+  if command -v apt-get >/dev/null; then sudo apt-get install -y xdotool wmctrl gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good || echo "  ! couldn't install Remote Play helpers — app-picker / occlusion-proof capture need them." >&2
+  elif command -v pacman  >/dev/null; then sudo pacman -S --noconfirm xdotool wmctrl gst-plugins-base gst-plugins-good || true
+  elif command -v dnf     >/dev/null; then sudo dnf install -y xdotool wmctrl gstreamer1-plugins-base gstreamer1-plugins-good || true
+  else echo "  ! install xdotool + wmctrl + gstreamer with your package manager for the Remote Play helpers." >&2; fi
 fi
 # autostart on login (graphical session has DISPLAY), and start it now
 AUTOSTART="$HOME/.config/autostart"
