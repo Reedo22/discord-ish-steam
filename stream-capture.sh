@@ -32,9 +32,10 @@ REST="${CAP_GEOM#*+}"; X="${REST%%+*}"; Y="${REST#*+}"
 env | sort > /tmp/cap-env.txt   # diagnostics: the env Steam handed us
 if [ -n "$INVITE" ] && [ -x "$RPW" ]; then
   (
-    while IFS='=' read -r k _; do
-      case "$k" in Steam*|STEAM*|LD_PRELOAD|SDL_*) unset "$k" ;; esac
-    done < <(env)
+    # Strip only the GAME-IDENTITY vars that make Steam deny RPW's client init
+    # (they point at our non-Steam capture shortcut). Keep Steam3Master / SteamEnv
+    # / SteamUser / SteamAppUser so RPW can still find + identify against Steam.
+    unset SteamAppId SteamGameId SteamOverlayGameId SteamClientLaunch LD_PRELOAD
     setsid "$RPW" -v -a 480 -i "$INVITE" \
       || setsid "$RPW" --appimage-extract-and-run -v -a 480 -i "$INVITE"
   ) >/tmp/rpw.log 2>&1 &
