@@ -1,3 +1,4 @@
 .superpowers/
 bin/remoteplaywhatever-x86_64.AppImage
 bin/*.AppImage
+__pycache__/

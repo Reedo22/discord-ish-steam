@@ -51,8 +51,9 @@
   var SPACEWAR = "480";
   var RPCAP = "/home/reedo/steam-reskin/rp-capture.py";   // our capture/control server (Linux path)
   var RPCTL = "http://127.0.0.1:48591";                    // its localhost control API (both OSes)
-  // Windows: the plugin can't exec, so it launches the capture+RPW via a non-Steam
-  // shortcut running this PowerShell launcher (installer rewrites the path).
+  // Windows: the plugin can't exec, so the hijacked-480 launch runs this PowerShell
+  // launcher, which starts the capture server (rp-capture.py). No RemotePlayWhatever —
+  // the invite is sent natively from JS, same as Linux. (installer rewrites the path).
   var WIN_POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
   var WIN_LAUNCHER = "C:\\Users\\reedo\\discord-ish-steam\\rp-capture-launch.ps1";
   function rpRaw() { return window.SteamClient && window.SteamClient.RemotePlay; }
@@ -68,33 +69,26 @@
     try {
       var sid = friendSteamID64(doc);
       if (!sid) { console.warn("[ds] RP: no friend for this chat"); return; }
-      var A = window.SteamClient.Apps, store = window.appStore;
-      var cap = window.__ds_capOpts || { screen: "primary", scale: "1920x1080" };
-      var res = (cap.scale && cap.scale !== "none") ? cap.scale : "none";
-      window.__ds_share_mode = "remoteplay";
-
-      if (IS_WIN) {
-        // Windows: launch the capture server + RemotePlayWhatever via a non-Steam
-        // shortcut. rp-capture.py runs RPW (-a 480 -i <sid>) to create the RPT
-        // session + invite; ffplay (gdigrab) shows the chosen monitor/app. The
-        // control server (localhost:48591) then drives live source/res switching.
-        var args = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + WIN_LAUNCHER + '" ' + cap.screen + " " + res + " " + sid;
-        var run = function (appid) {
-          try { A.SetShortcutLaunchOptions(appid, args); } catch (e) {}
-          setTimeout(function () { var ov = store.GetAppOverviewByAppID(appid); if (ov && ov.GetGameID) A.RunGame(ov.GetGameID(), "", -1, 100); }, 350);
-        };
-        if (window.__ds_capture_appid && store.GetAppOverviewByAppID(window.__ds_capture_appid)) { run(window.__ds_capture_appid); }
-        else { A.AddShortcut("Screen Stream", WIN_POWERSHELL, "", WIN_POWERSHELL).then(function (appid) { window.__ds_capture_appid = appid; run(appid); }); }
-        return;
-      }
-
-      // Linux: hijack Spacewar's launch to run our capture server, then invite via
-      // Steam's own RPT API the instant the 480 group appears.
       var RP = rpRaw();
       if (!RP) { console.warn("[ds] RP: SteamClient.RemotePlay missing"); return; }
-      var geom = MONITORS[cap.screen] || MONITORS.primary;
-      var hijack = "bash -c 'exec python3 " + RPCAP + " " + geom + " " + res + "' %command%";
-      try { A.ClearProton(480); } catch (e) {}                 // run our native server, not the Windows .exe
+      var A = window.SteamClient.Apps;
+      var cap = window.__ds_capOpts || { screen: "primary", scale: "1920x1080" };
+      var res = (cap.scale && cap.scale !== "none") ? cap.scale : "none";
+      // Linux passes explicit x11grab geometry; Windows passes the monitor keyword
+      // (rp-capture.py's resolve_geom enumerates the real geometry there via ctypes).
+      var geom = IS_WIN ? cap.screen : (MONITORS[cap.screen] || MONITORS.primary);
+      window.__ds_share_mode = "remoteplay";
+
+      // ONE mechanism on both OSes (no RemotePlayWhatever): hijack Spacewar's (480)
+      // launch so "launching Spacewar" runs our capture server instead of the game.
+      // Steam still tracks the launch as appid 480 -> the group is RPT-eligible ->
+      // Remote Play streams that window. %command% (the real game path) is handed to
+      // bash -c / the PowerShell launcher as ignored trailing args, so the game never
+      // runs. Only the launch command differs per OS; the invite path is identical.
+      var hijack = IS_WIN
+        ? ('"' + WIN_POWERSHELL + '" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + WIN_LAUNCHER + '" ' + geom + " " + res + " %command%")
+        : ("bash -c 'exec python3 " + RPCAP + " " + geom + " " + res + "' %command%");
+      if (!IS_WIN) { try { A.ClearProton(480); } catch (e) {} }  // Linux only: run our native server, not the Windows .exe under Proton
       try { A.SetAppLaunchOptions(480, hijack); } catch (e) {}
       var done = false, reg = null;
       var finish = function () { if (reg) { try { reg.unregister(); } catch (e) {} reg = null; } };
@@ -113,17 +107,10 @@
     var RP = rpRaw(), A = window.SteamClient.Apps;
     try { if (window.__ds_rpt_groupid != null && RP && RP.CloseGroup) RP.CloseGroup(window.__ds_rpt_groupid); } catch (e) {}
     window.__ds_rpt_groupid = null;
-    if (IS_WIN) {
-      // tear down the non-Steam capture shortcut (terminating it stops rp-capture.py + ffplay)
-      if (window.__ds_capture_appid) {
-        try { var ov = window.appStore.GetAppOverviewByAppID(window.__ds_capture_appid); if (ov && ov.GetGameID) A.TerminateApp(ov.GetGameID(), false); } catch (e) {}
-        try { A.RemoveShortcut(window.__ds_capture_appid); } catch (e) {}
-        window.__ds_capture_appid = 0;
-      }
-    } else {
-      try { A.TerminateApp(SPACEWAR, false); } catch (e) {}     // SIGTERMs rp-capture.py (stops ffplay)
-      try { A.SetAppLaunchOptions(480, ""); } catch (e) {}      // restore Spacewar's launch options
-    }
+    // Same teardown on both OSes now: kill the hijacked-480 process (stops the
+    // capture server + ffplay) and restore Spacewar's real launch options.
+    try { A.TerminateApp(SPACEWAR, false); } catch (e) {}
+    try { A.SetAppLaunchOptions(480, ""); } catch (e) {}
     window.__ds_share_mode = null;
   }
   // Live control of the running capture server (switch source / resolution without
@@ -512,7 +499,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 11;
+  var VERSION = 12;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;

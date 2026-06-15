@@ -61,27 +61,15 @@ if ($enabled -notcontains "discordish-chat") {
     Write-Host "Enabled discordish-chat in config.json"
 } else { Write-Host "discordish-chat already enabled" }
 
-# 6) RemotePlayWhatever (forces the Remote Play session + invite on Windows)
-$bin = Join-Path $repo "bin"
-New-Item -ItemType Directory -Force -Path $bin | Out-Null
-$rpwExe = Get-ChildItem -Path $bin -Recurse -Filter "RemotePlayWhatever*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $rpwExe) {
-    $rpw7z = Join-Path $bin "RemotePlayWhatever.7z"
-    $rpwUrl = "https://github.com/m4dEngi/RemotePlayWhatever/releases/download/0.2.14-alpha/RemotePlayWhatever_0.2.14_1774231078.7z"
-    Write-Host "Fetching RemotePlayWhatever..."
-    try { Invoke-WebRequest -Uri $rpwUrl -OutFile $rpw7z -UseBasicParsing } catch { Write-Warning "couldn't download RemotePlayWhatever - place RemotePlayWhatever.exe in $bin manually." }
-    if (Test-Path $rpw7z) {
-        # Windows 10+ tar (bsdtar) can usually read .7z; else extract manually with 7-Zip.
-        & tar -xf $rpw7z -C $bin 2>$null
-        $rpwExe = Get-ChildItem -Path $bin -Recurse -Filter "RemotePlayWhatever*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-    }
+# 6) (RemotePlayWhatever removed) The Remote Play session + invite are now created
+#    natively by the plugin via the Spacewar/appid-480 launch hijack, same as Linux —
+#    no external binary. Spacewar (free, appid 480) must be installed in your library.
+$spacewar = $false
+foreach ($r in $roots) {
+    if (Test-Path (Join-Path $r "steamapps\common\Spacewar")) { $spacewar = $true; break }
 }
-# the launcher expects bin\RemotePlayWhatever.exe — normalise the name
-if ($rpwExe -and $rpwExe.Name -ne "RemotePlayWhatever.exe") {
-    Copy-Item $rpwExe.FullName (Join-Path $bin "RemotePlayWhatever.exe") -Force
-}
-if (-not (Test-Path (Join-Path $bin "RemotePlayWhatever.exe"))) {
-    Write-Warning "RemotePlayWhatever.exe not in $bin - extract the .7z there (7-Zip) so Remote Play can create the session."
+if (-not $spacewar) {
+    Write-Warning "Spacewar (appid 480) not detected - install it free from your Steam library (search 'Spacewar') so Remote Play screen-share works."
 }
 
 # 7) checks

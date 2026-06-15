@@ -6,14 +6,13 @@
 # plugin switches monitor / app / resolution live over a localhost HTTP API by
 # restarting only the ffplay (capture) child.
 #
-# Linux:  launched AS Spacewar (appid 480) via a launch-options hijack; the JS
-#         side creates the RPT invite. Monitor = ffplay x11grab; app = gst
-#         ximagesrc xid | ffplay (occlusion-proof via XComposite/KWin).
-# Windows: launched as a non-Steam shortcut; on start it runs RemotePlayWhatever
-#         (-a 480 -i <sid>) to force the RPT session + invite. Monitor + app both
-#         use ffplay -f gdigrab (-i desktop region / -i title=<title>).
+# BOTH OSes are launched AS Spacewar (appid 480) via a launch-options hijack; the
+# plugin (JS) creates the RPT invite natively (no RemotePlayWhatever).
+# Linux:  monitor = ffplay x11grab; app = gst ximagesrc xid | ffplay
+#         (occlusion-proof via XComposite/KWin).
+# Windows: monitor + app both use ffplay -f gdigrab (-i desktop region / -i title=).
 #
-# Args:  <geom|primary|secondary>  <res WxH|none>  [invite_steamid64]
+# Args:  <geom|primary|secondary>  <res WxH|none>
 # API (GET, JSON):
 #   /sources                 -> {monitors:[{name,geom,primary}], windows:[{id,title,...}]}
 #   /set?geom=WxH+X+Y[&res=] -> capture a monitor region
@@ -25,7 +24,6 @@ import sys, os, subprocess, threading, json, signal, shutil
 IS_WIN = sys.platform.startswith("win")
 PORT = 48591
 DISPLAY = os.environ.get("DISPLAY", ":0")
-RPW = os.environ.get("RPW_PATH", "")          # RemotePlayWhatever path (Windows)
 state = {"proc": None, "res": "1920x1080", "kind": None, "value": None}
 lock = threading.Lock()
 
@@ -250,17 +248,11 @@ class H(BaseHTTPRequestHandler):
 
 def main():
     geom = resolve_geom(sys.argv[1] if len(sys.argv) > 1 else "primary")
-    if len(sys.argv) > 2:
+    if len(sys.argv) > 2 and sys.argv[2]:
         state["res"] = sys.argv[2]
-    invite = sys.argv[3] if len(sys.argv) > 3 else ""
-
-    # Windows: force the RPT session + invite via RemotePlayWhatever (Linux does
-    # this from the plugin via the launch hijack + native CreateInviteAndSession).
-    if IS_WIN and invite and invite != "none" and RPW and os.path.exists(RPW):
-        try:
-            subprocess.Popen([RPW, "-a", "480", "-i", invite])
-        except Exception:
-            pass
+    # NOTE: the RPT session + invite are created natively by the plugin (JS) on
+    # both OSes via the launch-hijack of appid 480 + CreateInviteAndSession.
+    # RemotePlayWhatever is no longer used; this server only owns the capture.
 
     start_capture("monitor", geom)
     srv = HTTPServer(("127.0.0.1", PORT), H)
