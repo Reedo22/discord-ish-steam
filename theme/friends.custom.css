@@ -384,6 +384,37 @@ html.discordish-incall .chatHeader .ChatMessageEntryVoice { display: none !impor
   box-sizing: border-box !important;
 }
 .ds-share-tile .ds-name { background: var(--ds-accent, #5865f2) !important; }
+/* ===== Discord-style incoming/outgoing 1:1 call screen ===== */
+.ds-ring {
+  position: fixed !important; inset: 0 !important; z-index: 9000 !important;
+  display: flex !important; flex-direction: column !important;
+  align-items: center !important; justify-content: center !important; gap: 14px !important;
+  background: rgba(15, 16, 18, .82) !important; backdrop-filter: blur(4px) !important;
+  animation: dsStageIn .18s var(--dc-ease, ease) !important;
+}
+.ds-ring-av {
+  width: 104px !important; height: 104px !important; border-radius: 50% !important;
+  background: #1e1f22 center/cover no-repeat !important;
+  box-shadow: 0 0 0 4px var(--dc-online) !important;
+  animation: dsRingPulse 1.5s ease-in-out infinite !important;
+}
+.ds-ring-name { font-size: 22px !important; font-weight: 700 !important; color: #fff !important; }
+.ds-ring-sub { color: var(--dc-muted) !important; font-size: 14px !important; letter-spacing: .02em !important; }
+.ds-ring-btns { display: flex !important; gap: 18px !important; margin-top: 10px !important; }
+.ds-ring-accept, .ds-ring-decline {
+  border: none !important; border-radius: 22px !important; padding: 10px 22px !important;
+  font-size: 14px !important; font-weight: 700 !important; color: #fff !important; cursor: pointer !important;
+  transition: filter var(--dc-fast, 120ms) ease, transform var(--dc-fast, 120ms) ease !important;
+}
+.ds-ring-accept { background: var(--dc-online) !important; }
+.ds-ring-decline { background: #f23f43 !important; }
+.ds-ring-accept:hover, .ds-ring-decline:hover { filter: brightness(1.1) !important; }
+.ds-ring-accept:active, .ds-ring-decline:active { transform: scale(.95) !important; }
+@keyframes dsRingPulse {
+  0%, 100% { box-shadow: 0 0 0 4px var(--dc-online); }
+  50%      { box-shadow: 0 0 0 12px rgba(35, 165, 90, .35); }
+}
+
 /* self-preview of your own share, inside the share popover */
 .ds-share-preview {
   width: 100% !important; height: 140px !important; margin: 8px 0 !important;

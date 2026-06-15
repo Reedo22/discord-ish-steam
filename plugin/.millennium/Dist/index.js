@@ -415,17 +415,6 @@
     qsel.addEventListener("change", function () { try { var R = rpRaw(); if (R && R.SetClientStreamingQuality) R.SetClientStreamingQuality(+qsel.value); } catch (e) {} });
     qrow.appendChild(qlbl); qrow.appendChild(qsel); spop.appendChild(qrow);
     var sgo = el(doc, "button", "ds-stream-go"); spop.appendChild(sgo);
-    // copyable link to YOUR share (host) — paste it to a friend so they can watch
-    var slink = el(doc, "input", "ds-vs-select"); slink.readOnly = true;
-    slink.style.cssText = "width:100%;margin-top:6px;display:none";
-    slink.addEventListener("click", function () { slink.select(); try { doc.execCommand("copy"); } catch (e) {} });
-    spop.appendChild(slink);
-    // watch SOMEONE ELSE's share (viewer) — paste their link + Watch
-    var wrow = el(doc, "div", "ds-vs-row"); wrow.style.marginTop = "8px";
-    var winput = el(doc, "input", "ds-vs-select"); winput.type = "text"; winput.placeholder = "paste link to watch"; winput.style.flex = "1 1 auto";
-    var wbtn = el(doc, "button", "ds-stream-go"); wbtn.textContent = "Watch"; wbtn.style.cssText = "width:auto;margin:0 0 0 6px";
-    wbtn.addEventListener("click", function () { var u = winput.value.trim(); if (u) { window.__ds_view_url = u; } });
-    wrow.appendChild(winput); wrow.appendChild(wbtn); spop.appendChild(wrow);
     var srefresh = function () {
       var sharing = window.__ds_share_mode === "webrtc";
       shareB.classList.toggle("sharing", sharing);
@@ -438,11 +427,9 @@
       if (sharing) {
         sprev.style.display = "block";
         if (sprev.dataset.live !== "1" && window.__ds_share_local) { sprev.dataset.live = "1"; wConnectShare(window.__ds_share_local, sprev); }
-        if (window.__ds_share_url) { slink.style.display = "block"; if (slink.value !== window.__ds_share_url) slink.value = window.__ds_share_url; }
       } else {
         sprev.style.display = "none"; sprev.dataset.live = "";
         if (sprev.__pc) { try { sprev.__pc.close(); } catch (e) {} sprev.__pc = null; }
-        slink.style.display = "none";
       }
     };
     sgo.addEventListener("click", function () {
@@ -699,6 +686,59 @@
     } catch (e) {}
   }
 
+  // === Discord-style incoming/outgoing 1:1 call screen ======================
+  function friendByAcct(acct) {
+    try { return (window.g_FriendsUIApp.m_FriendStore.all_friends || []).find(function (f) { return f.m_unAccountID === acct; }); }
+    catch (e) { return null; }
+  }
+  window.__ds_ring_dismissed = window.__ds_ring_dismissed || {};
+  function ringUI(doc) {
+    try {
+      var vc = window.g_FriendsUIApp.m_VoiceChatStore;
+      var m = vc && vc.m_mapOneOnOneCallsWaitingJoinOrAccept;
+      var ring = doc.getElementById("ds-ring");
+      var pick = null;
+      if (m && m.forEach) m.forEach(function (v, k) {
+        if (pick || window.__ds_ring_dismissed[String(v.voice_chatid)]) return;   // skip dismissed
+        var self = vc.BSelfHasAcceptedOrInitiatedOneOnOneChat(v.voice_chatid);
+        var partner = vc.BPartnerHasAcceptedOrInitiatedOneOnOneChat(v.voice_chatid);
+        if (self && partner) return;             // connected -> callStage handles it
+        pick = { acct: k, chatid: v.voice_chatid, incoming: partner && !self };
+      });
+      if (!pick) { if (ring) ring.remove(); return; }
+      var f = friendByAcct(pick.acct), p = f && f.m_persona;
+      var name = (f && f.m_strNickname) || (p && p.m_strPlayerName) || "Friend";
+      var avatar = p && p.m_strAvatarHash ? ("https://avatars.steamstatic.com/" + p.m_strAvatarHash + "_full.jpg") : "";
+      if (!ring) {
+        ring = el(doc, "div", "ds-ring"); ring.id = "ds-ring";
+        var av = el(doc, "div", "ds-ring-av");
+        var nm = el(doc, "div", "ds-ring-name");
+        var st = el(doc, "div", "ds-ring-sub");
+        var btns = el(doc, "div", "ds-ring-btns");
+        var accept = el(doc, "button", "ds-ring-accept"); accept.textContent = "✓ Accept";
+        var decline = el(doc, "button", "ds-ring-decline"); decline.textContent = "✕ Decline";
+        accept.addEventListener("click", function () { try { vc.JoinVoiceChatOrAskForOneOnOneChatNow(); } catch (e) { console.warn("[ds] accept", e); } });
+        decline.addEventListener("click", function () {
+          window.__ds_ring_dismissed[String(ring.__chatid)] = true;   // never re-show this call
+          try { vc.DeleteOneOnOneCallWaitingJoinOrAccept(ring.__acct); } catch (e) { console.warn("[ds] decline", e); }
+          ring.remove();
+        });
+        ring.addEventListener("click", function (e) {   // backdrop click = dismiss (failsafe, won't get stuck)
+          if (e.target === ring) { window.__ds_ring_dismissed[String(ring.__chatid)] = true; ring.remove(); }
+        });
+        btns.appendChild(accept); btns.appendChild(decline);
+        ring.appendChild(av); ring.appendChild(nm); ring.appendChild(st); ring.appendChild(btns);
+        doc.body.appendChild(ring);
+      }
+      ring.__acct = pick.acct; ring.__chatid = pick.chatid;
+      ring.querySelector(".ds-ring-av").style.backgroundImage = avatar ? ("url(" + avatar + ")") : "";
+      ring.querySelector(".ds-ring-name").textContent = name;
+      ring.querySelector(".ds-ring-sub").textContent = pick.incoming ? "Incoming call" : "Calling…";
+      ring.querySelector(".ds-ring-accept").style.display = pick.incoming ? "" : "none";
+      ring.querySelector(".ds-ring-decline").textContent = pick.incoming ? "✕ Decline" : "✕ Cancel";
+    } catch (e) {}
+  }
+
   var __ds_tickn = 0;
   function tick() {
     __ds_tickn++;
@@ -706,6 +746,7 @@
     friendsDocs().forEach(function (doc) {
       try { injectCSS(doc); } catch (e) {}
       try { chatTweaks(doc); } catch (e) {}
+      try { ringUI(doc); } catch (e) {}
       try { callStage(doc); } catch (e) {}
       try { hideSignalMessages(doc); } catch (e) {}
     });
@@ -731,7 +772,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 27;
+  var VERSION = 28;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
