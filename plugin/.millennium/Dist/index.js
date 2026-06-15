@@ -130,6 +130,54 @@
     fetch(RPCTL + "/res?v=" + encodeURIComponent(res), { cache: "no-store" }).catch(function () {});
   }
 
+  // --- Watcher side: dock the incoming Remote Play stream into the call UI ------
+  // The RPT video is drawn by Steam's native streaming client, so it can't live
+  // inside a DOM element. But the streaming client config exposes windowed + window
+  // position/size (verified), so we force the stream out of fullscreen and park its
+  // native window exactly over a "screen share" tile in the call stage — re-applying
+  // each tick so it stays put ("as a third person", click the tile to enlarge).
+  var __ds_w = { expanded: false, last: "", tick: 0 };
+  function rpClientCfg() {
+    try { return window.RemotePlayStore_SteamUI && window.RemotePlayStore_SteamUI.m_clientConfig; } catch (e) { return null; }
+  }
+  // Are we (the watcher) currently receiving a Remote Play stream?
+  function isWatchingStream() {
+    try {
+      var s = window.RemotePlayStore_SteamUI; if (!s) return false;
+      var cs = s.m_remoteClientStreams;
+      var n = cs ? (Array.isArray(cs) ? cs.length : (cs.size != null ? cs.size : Object.keys(cs).length)) : 0;
+      if (n > 0) return true;
+      if (s.m_settings && s.m_settings.unStreamingSessionID) return true;
+      if (s.BIsStreamingRemotePlayTogetherGame && s.BIsStreamingRemotePlayTogetherGame()) return true;
+    } catch (e) {}
+    return false;
+  }
+  // Force the native stream window windowed + positioned over `el` (screen coords).
+  // Throttled: only re-pushes the config when the target rect actually moves (or
+  // every ~2s) so we're not spamming SetStreamingClientConfig at 150ms.
+  function dockStreamInto(el, doc) {
+    var cc = rpClientCfg(); if (!cc || !el) return;
+    try {
+      var view = doc.defaultView || window;
+      var r = el.getBoundingClientRect();
+      var dpr = view.devicePixelRatio || 1;
+      var x = Math.round((view.screenX + r.left) * dpr);
+      var y = Math.round((view.screenY + r.top) * dpr);
+      var w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+      if (w < 120 || h < 90) return;
+      var sig = [x, y, w, h].join(",");
+      __ds_w.tick++;
+      if (sig === __ds_w.last && __ds_w.tick % 14 !== 0) return;   // unchanged + not the periodic re-assert
+      __ds_w.last = sig;
+      var RP = rpRaw(); if (!RP) return;
+      cc.set_windowed(true);
+      cc.set_window_position_x(x); cc.set_window_position_y(y);
+      cc.set_window_width(w); cc.set_window_height(h);
+      RP.SetStreamingClientConfig(cc);
+      RP.SetStreamingClientConfigEnabled(true);   // best-effort; placement may apply even if the gate doesn't stick
+    } catch (e) {}
+  }
+
   function chatTweaks(doc) {
     doc.querySelectorAll(".chatWindow").forEach(function (win) {
       var header = win.querySelector(".chatHeader");
@@ -435,6 +483,30 @@
       tileEls[i].classList.toggle("speaking", src_friends[i].classList.contains("speaking"));
     }
 
+    // Watcher: when we're receiving a Remote Play stream, show a "screen share"
+    // tile (the third person) and park the native stream window over it — over the
+    // whole tile area when expanded. Re-docked each tick so it stays in the call UI.
+    var shareTile = tiles.querySelector(".ds-share-tile");
+    if (isWatchingStream()) {
+      if (!shareTile) {
+        shareTile = el(doc, "div", "ds-tile ds-share-tile");
+        var lbl = el(doc, "div", "ds-name"); lbl.textContent = "🖥 Screen";
+        var hint = el(doc, "div", "ds-share-hint"); hint.textContent = "click to enlarge";
+        shareTile.appendChild(lbl); shareTile.appendChild(hint);
+        shareTile.addEventListener("click", function () {
+          __ds_w.expanded = !__ds_w.expanded;
+          __ds_w.last = "";   // force an immediate re-dock at the new size
+          stage.classList.toggle("ds-share-expanded", __ds_w.expanded);
+        });
+        tiles.appendChild(shareTile);
+      }
+      dockStreamInto(__ds_w.expanded ? tiles : shareTile, doc);
+    } else if (shareTile) {
+      shareTile.remove();
+      __ds_w.expanded = false; __ds_w.last = "";
+      stage.classList.remove("ds-share-expanded");
+    }
+
     // sync control icons from Steam's real SVGs (also reflects mute/deafen state)
     stage.querySelectorAll(".ds-btn").forEach(function (b) {
       var sel = b.dataset.src;
@@ -499,7 +571,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 12;
+  var VERSION = 13;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
