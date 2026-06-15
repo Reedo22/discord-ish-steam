@@ -9,6 +9,11 @@ import sys, json, asyncio, urllib.request, subprocess, re
 import websockets
 
 def _detect_port():
+    # Explicit override (e.g. the sandboxed guest Steam on CEF's marker-file port 8080,
+    # which has no remote-debugging-port= flag in its cmdline for pgrep to find).
+    import os
+    if os.environ.get("DS_CDP_PORT"):
+        return int(os.environ["DS_CDP_PORT"])
     try:
         out = subprocess.check_output(["pgrep", "-af", "steamwebhelper"], text=True)
         m = re.search(r"remote-debugging-port=(\d+)", out)
