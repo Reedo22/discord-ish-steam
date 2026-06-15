@@ -384,6 +384,12 @@ html.discordish-incall .chatHeader .ChatMessageEntryVoice { display: none !impor
   box-sizing: border-box !important;
 }
 .ds-share-tile .ds-name { background: var(--ds-accent, #5865f2) !important; }
+/* the live WebRTC screen-share video fills the tile */
+.ds-share-video {
+  width: 100% !important; height: 100% !important;
+  object-fit: contain !important; background: #000 !important;
+  border-radius: 12px !important; display: block !important;
+}
 .ds-share-hint {
   position: absolute !important; right: 8px !important; bottom: 8px !important;
   font-size: 11px !important; color: rgba(255,255,255,.75) !important;

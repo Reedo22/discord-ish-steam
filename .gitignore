@@ -2,3 +2,9 @@
 bin/remoteplaywhatever-x86_64.AppImage
 bin/*.AppImage
 __pycache__/
+bin/mediamtx
+bin/cloudflared
+bin/mediamtx.yml
+bin/LICENSE
+bin/auto.crt
+bin/auto.key

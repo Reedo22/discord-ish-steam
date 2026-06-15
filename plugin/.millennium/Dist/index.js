@@ -58,7 +58,11 @@
   var WIN_LAUNCHER = "C:\\Users\\reedo\\discord-ish-steam\\rp-capture-launch.ps1";
   function rpRaw() { return window.SteamClient && window.SteamClient.RemotePlay; }
 
-  // PROVEN Remote Play Together share flow.
+  // (Single-monitor capture via server-config custom_display_device was removed: on
+  //  Linux the streaming backend clears the value for every format tried AND enabling
+  //  the server-config gate crashed the share. Whole-desktop only on Linux.)
+
+  // Remote Play Together share flow.
   //
   // We do NOT hijack Spacewar's launch anymore. The old approach pointed appid 480 at
   // a fake ffplay/gstreamer "game" so RPT would stream that window — but on Linux RPT
@@ -87,6 +91,18 @@
       var A = window.SteamClient.Apps;
       window.__ds_share_mode = "remoteplay";
 
+      // CRITICAL: enabling desktop mode isn't enough — once the guest's remote client
+      // actually connects we must call StartDesktopStream(clientId) to switch the stream
+      // from the Spacewar GAME window to the DESKTOP. Without this the friend only sees
+      // Spacewar. Register once; it fires whenever a remote client starts during a share.
+      if (!window.__ds_rcs_reg && RP.RegisterForRemoteClientStarted) {
+        window.__ds_rcs_reg = RP.RegisterForRemoteClientStarted(function (groupID, steam, gameid, clientId) {
+          if (window.__ds_share_mode !== "remoteplay") return;
+          console.log("[ds] remote client started -> StartDesktopStream", clientId);
+          try { RP.StartDesktopStream(clientId); } catch (e) { console.warn("[ds] StartDesktopStream", e); }
+        });
+      }
+
       // Fast path: the anchor was pre-warmed when the call started (prewarmAnchor) —
       // the group already exists, so just enable desktop streaming + invite. Instant.
       if (window.__ds_anchor_warm && window.__ds_rpt_groupid != null) {
@@ -106,8 +122,8 @@
         if (done || String(gameid) !== SPACEWAR) return;        // ignore unrelated groups
         done = true;
         window.__ds_rpt_groupid = groupID;                       // so "Stop sharing" can CloseGroup
-        // Stream the WHOLE desktop, not just the Spacewar window — the friend sees your
-        // actual screen. Spacewar is only the anchor that makes the RPT group exist.
+        // Stream the WHOLE desktop — the friend sees your screen. Spacewar is only the
+        // anchor that makes the RPT group exist.
         try { RP.SetStreamingDesktopToRemotePlayTogetherEnabled(groupID, true); } catch (e) {}
         try { RP.CreateInviteAndSession(groupID, sid, false); } catch (e) { console.warn("[ds] invite", e); }
         finish();
@@ -150,6 +166,54 @@
     try { A.TerminateApp(SPACEWAR, false); } catch (e) {}
     setTimeout(function () { try { A.RunGame(SPACEWAR, "", -1, 100); } catch (e) {} }, 3000);
   }
+
+  // === WebRTC screen share (replaces Steam Remote Play) =====================
+  // The host's capture/encode/serve is done natively by rp-webrtc.py (ffmpeg + NVENC/
+  // VAAPI/QSV/x264 auto-detected -> MediaMTX -> WebRTC/WHEP); CEF can't capture but CAN
+  // render an incoming WebRTC stream in a <video>. Host: POST /start -> WHEP url. Viewer:
+  // WHEP client -> <video> in the call tile. URL hand-off between peers is signaled out
+  // of band (test: passed in; later: Steam chat / a share link).
+  var WCTL = "http://127.0.0.1:48592";          // local daemon control API
+  function wStartShare(geom) {
+    window.__ds_share_mode = "webrtc";
+    var qs = geom ? ("?geom=" + encodeURIComponent(geom)) : "";
+    return fetch(WCTL + "/start" + qs, { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { window.__ds_share_url = j && j.whep; window.__ds_share_info = j; return j; })
+      .catch(function (e) { console.warn("[ds] wStartShare", e); return null; });
+  }
+  function wStopShare() {
+    window.__ds_share_mode = null; window.__ds_share_url = null;
+    fetch(WCTL + "/stop", { cache: "no-store" }).catch(function () {});
+    if (window.__ds_pc) { try { window.__ds_pc.close(); } catch (e) {} window.__ds_pc = null; }
+  }
+  // Viewer: WHEP-negotiate `whepUrl` and render into <video> `v`. If the url is plain
+  // http to a non-localhost host, route signaling through our local daemon proxy
+  // (/whep?target=) so the secure-context page can reach it (mixed-content workaround).
+  function wConnectShare(whepUrl, v) {
+    try {
+      if (window.__ds_pc) { try { window.__ds_pc.close(); } catch (e) {} }
+      var pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+      window.__ds_pc = pc;
+      pc.addTransceiver("video", { direction: "recvonly" });
+      pc.ontrack = function (e) { v.srcObject = e.streams[0]; if (v.play) v.play().catch(function () {}); };
+      pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).then(function () {
+        return new Promise(function (r) {
+          if (pc.iceGatheringState === "complete") return r();
+          pc.onicegatheringstatechange = function () { if (pc.iceGatheringState === "complete") r(); };
+          setTimeout(r, 2000);
+        });
+      }).then(function () {
+        var localish = /^https:/.test(whepUrl) || /^https?:\/\/(127\.0\.0\.1|localhost)\b/.test(whepUrl);
+        var url = localish ? whepUrl : (WCTL + "/whep?target=" + encodeURIComponent(whepUrl));
+        return fetch(url, { method: "POST", headers: { "Content-Type": "application/sdp" }, body: pc.localDescription.sdp });
+      }).then(function (res) { return res.text(); })
+        .then(function (ans) { return pc.setRemoteDescription({ type: "answer", sdp: ans }); })
+        .catch(function (e) { console.warn("[ds] wConnectShare", e); });
+    } catch (e) { console.warn("[ds] wConnectShare", e); }
+  }
+  // exposed so the test harness (and later, chat-signaling) can start a viewer:
+  window.__dsConnectShare = function (url) { window.__ds_view_url = url; };
   // Live control of the running capture server (switch source / resolution without
   // dropping the RPT session). Reachable because Chromium lets https pages fetch
   // http://127.0.0.1 (localhost is "potentially trustworthy").
@@ -343,17 +407,17 @@
     qrow.appendChild(qlbl); qrow.appendChild(qsel); spop.appendChild(qrow);
     var sgo = el(doc, "button", "ds-stream-go"); spop.appendChild(sgo);
     var srefresh = function () {
-      var sharing = window.__ds_share_mode === "remoteplay";
+      var sharing = window.__ds_share_mode === "webrtc";
       shareB.classList.toggle("sharing", sharing);
       sgo.textContent = sharing ? "Stop sharing" : ("Share my screen to " + (chatFriendName(doc) || "friend"));
       sgo.classList.toggle("ds-stream-stop", sharing);
       sstatus.textContent = sharing
-        ? "Sharing your screen — they must accept the Remote Play invite."
-        : "Streams your whole screen to this friend over Remote Play.";
+        ? ("Sharing (" + ((window.__ds_share_info && window.__ds_share_info.encoder) || "?") + "). Link: " + (window.__ds_share_url || "starting…"))
+        : "Streams a monitor to your friend — WebRTC, low latency, in-call.";
     };
     sgo.addEventListener("click", function () {
-      if (window.__ds_share_mode === "remoteplay") stopShareNative(); else shareRP(doc);
-      setTimeout(srefresh, 50);
+      if (window.__ds_share_mode === "webrtc") { wStopShare(); setTimeout(srefresh, 60); }
+      else { wStartShare(window.__ds_share_geom).then(function () { srefresh(); }); }
     });
     shareB.addEventListener("click", function (e) {
       e.stopPropagation();
@@ -389,12 +453,10 @@
     var hasControls = !!doc.querySelector(".activeVoiceButtons");
     var inCall = !!src && hasControls;
 
-    // Pre-warm the share anchor as soon as a call starts so "Share" is near-instant.
-    if (inCall) { try { prewarmAnchor(); } catch (e) {} }
-    // When the call ends, tear everything down: close the RPT group + terminate the
-    // Spacewar anchor (whether we were sharing OR just pre-warmed) so nothing lingers.
-    if (!inCall && (window.__ds_share_mode === "remoteplay" || window.__ds_anchor_warm || window.__ds_anchor_warming)) {
-      try { stopShareNative(); } catch (e) {}
+    // When the call ends, stop any share we're hosting + drop any stream we're viewing.
+    if (!inCall) {
+      if (window.__ds_share_mode === "webrtc") { try { wStopShare(); } catch (e) {} }
+      if (window.__ds_view_url) { window.__ds_view_url = null; if (window.__ds_pc) { try { window.__ds_pc.close(); } catch (e) {} window.__ds_pc = null; } }
     }
 
     var wins = [].slice.call(doc.querySelectorAll(".chatWindow"));
@@ -479,27 +541,31 @@
       tileEls[i].classList.toggle("speaking", src_friends[i].classList.contains("speaking"));
     }
 
-    // Watcher: when we're receiving a Remote Play stream, show a "screen share"
-    // tile (the third person) and park the native stream window over it — over the
-    // whole tile area when expanded. Re-docked each tick so it stays in the call UI.
+    // Viewer: if we've been handed a share URL (signaled via chat, or set for testing),
+    // show a "screen share" tile (the third person) with the live WebRTC <video> right
+    // in it. Click to enlarge. This is real DOM video — no native window docking.
     var shareTile = tiles.querySelector(".ds-share-tile");
-    if (isWatchingStream()) {
+    if (window.__ds_view_url) {
       if (!shareTile) {
         shareTile = el(doc, "div", "ds-tile ds-share-tile");
+        var vid = el(doc, "video"); vid.className = "ds-share-video";
+        vid.autoplay = true; vid.muted = true; vid.playsInline = true;
         var lbl = el(doc, "div", "ds-name"); lbl.textContent = "🖥 Screen";
-        var hint = el(doc, "div", "ds-share-hint"); hint.textContent = "click to enlarge";
-        shareTile.appendChild(lbl); shareTile.appendChild(hint);
+        shareTile.appendChild(vid); shareTile.appendChild(lbl);
         shareTile.addEventListener("click", function () {
           __ds_w.expanded = !__ds_w.expanded;
-          __ds_w.last = "";   // force an immediate re-dock at the new size
           stage.classList.toggle("ds-share-expanded", __ds_w.expanded);
         });
         tiles.appendChild(shareTile);
+        shareTile.dataset.url = window.__ds_view_url;
+        wConnectShare(window.__ds_view_url, vid);
+      } else if (shareTile.dataset.url !== window.__ds_view_url) {
+        shareTile.dataset.url = window.__ds_view_url;
+        wConnectShare(window.__ds_view_url, shareTile.querySelector("video"));
       }
-      dockStreamInto(__ds_w.expanded ? tiles : shareTile, doc);
     } else if (shareTile) {
       shareTile.remove();
-      __ds_w.expanded = false; __ds_w.last = "";
+      __ds_w.expanded = false;
       stage.classList.remove("ds-share-expanded");
     }
 
@@ -516,7 +582,7 @@
     });
     // reflect live share state on the share control (red while sharing)
     var sc = stage.querySelector(".ds-share-ctrl");
-    if (sc) sc.classList.toggle("sharing", window.__ds_share_mode === "remoteplay");
+    if (sc) sc.classList.toggle("sharing", window.__ds_share_mode === "webrtc");
   }
 
   // Auto-update (no Python): pull the latest reskin CSS straight from the repo and
@@ -571,7 +637,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 21;
+  var VERSION = 24;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
