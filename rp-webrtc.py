@@ -26,6 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.path.join(HERE, "bin")
 MEDIAMTX = os.path.join(BIN, "mediamtx")
 MTX_CFG = os.path.join(BIN, "rp-mediamtx.yml")
+CLOUDFLARED = os.path.join(BIN, "cloudflared")
 PORT = 48592                 # control API (was 48591 for the old capture server)
 RTSP = "rtsp://127.0.0.1:8554/screen"
 WHEP_PORT = 8889
@@ -33,7 +34,7 @@ DISPLAY = os.environ.get("DISPLAY", ":1")
 BITRATE = os.environ.get("DS_BITRATE", "12M")
 FPS = os.environ.get("DS_FPS", "30")
 
-state = {"ff": None, "mtx": None, "geom": None}
+state = {"ff": None, "mtx": None, "geom": None, "cf": None, "cf_url": None}
 lock = threading.Lock()
 
 
@@ -110,6 +111,48 @@ def ensure_mediamtx():
     time.sleep(1.5)
 
 
+def stop_tunnel():
+    p = state.get("cf")
+    if p and p.poll() is None:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGTERM); p.wait(timeout=3)
+        except Exception:
+            try: os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+            except Exception: pass
+    state["cf"] = None; state["cf_url"] = None
+
+
+def ensure_tunnel():
+    # Start a Cloudflare quick tunnel exposing ONLY MediaMTX's WebRTC port, so off-LAN
+    # viewers get a valid-HTTPS WHEP url (no mixed-content, no proxy). Tunnel carries the
+    # tiny signaling only; media is P2P (STUN). Torn down on /stop. Random one-time URL.
+    if state.get("cf") and state["cf"].poll() is None and state.get("cf_url"):
+        return state["cf_url"]
+    if not os.path.exists(CLOUDFLARED):
+        return None
+    stop_tunnel()
+    p = subprocess.Popen([CLOUDFLARED, "tunnel", "--no-autoupdate", "--url",
+                          "http://localhost:%d" % WHEP_PORT],
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         start_new_session=True, text=True)
+    state["cf"] = p
+
+    def reader():
+        try:
+            for line in p.stdout:
+                m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
+                if m and not state.get("cf_url"):
+                    state["cf_url"] = m.group(0)
+        except Exception:
+            pass
+    threading.Thread(target=reader, daemon=True).start()
+    for _ in range(60):                       # wait up to ~15s for the URL
+        if state.get("cf_url"):
+            break
+        time.sleep(0.25)
+    return state.get("cf_url")
+
+
 def stop_capture():
     p = state.get("ff")
     if p and p.poll() is None:
@@ -159,6 +202,7 @@ class H(BaseHTTPRequestHandler):
         u = urlparse(self.path); q = parse_qs(u.query)
         ip = lan_ip()
         whep = "http://%s:%d/screen/whep" % (ip, WHEP_PORT)
+        lan_whep = whep
         if u.path == "/sources":
             self._send({"monitors": monitors(), "encoder": pick_encoder()[0]})
         elif u.path == "/start":
@@ -166,12 +210,17 @@ class H(BaseHTTPRequestHandler):
             if not geom:
                 mons = monitors(); geom = (next((m for m in mons if m["primary"]), mons[0])["geom"] if mons else "1920x1080+0+0")
             ok = start_capture(geom)
-            self._send({"ok": ok, "whep": whep, "path": "screen", "geom": geom, "encoder": pick_encoder()[0]})
+            # local=1 -> skip the tunnel (LAN-only, faster). default -> public https tunnel.
+            tun = None if q.get("local", ["0"])[0] == "1" else ensure_tunnel()
+            out_whep = (tun + "/screen/whep") if tun else lan_whep
+            self._send({"ok": ok, "whep": out_whep, "lan_whep": lan_whep, "tunnel": bool(tun),
+                        "path": "screen", "geom": geom, "encoder": pick_encoder()[0]})
         elif u.path == "/stop":
-            with lock: stop_capture()
+            with lock: stop_capture(); stop_tunnel()
             self._send({"ok": True})
         elif u.path == "/url":
-            self._send({"whep": whep, "lan_ip": ip})
+            tun = state.get("cf_url")
+            self._send({"whep": (tun + "/screen/whep") if tun else lan_whep, "lan_ip": ip, "tunnel": bool(tun)})
         elif u.path == "/ping":
             self._send({"ok": True, "running": bool(state.get("ff") and state["ff"].poll() is None)})
         else:
@@ -219,7 +268,7 @@ class H(BaseHTTPRequestHandler):
 def main():
     srv = HTTPServer(("127.0.0.1", PORT), H)
     def shutdown(*a):
-        with lock: stop_capture()
+        with lock: stop_capture(); stop_tunnel()
         os._exit(0)
     signal.signal(signal.SIGTERM, shutdown); signal.signal(signal.SIGINT, shutdown)
     print("rp-webrtc daemon on 127.0.0.1:%d (encoder=%s, lan=%s)" % (PORT, pick_encoder()[0], lan_ip()))
