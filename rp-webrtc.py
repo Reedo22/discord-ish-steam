@@ -47,6 +47,20 @@ def lan_ip():
         return "127.0.0.1"
 
 
+_pubip = [None]
+def public_ip():
+    if _pubip[0]:
+        return _pubip[0]
+    for url in ("https://api.ipify.org", "https://ifconfig.me"):
+        try:
+            _pubip[0] = urllib.request.urlopen(url, timeout=6).read().decode().strip()
+            if _pubip[0]:
+                break
+        except Exception:
+            pass
+    return _pubip[0]
+
+
 def _ffmpeg_encoders():
     try:
         return subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
@@ -106,8 +120,16 @@ def ensure_mediamtx():
             return
     except Exception:
         pass
+    # Advertise BOTH the LAN interface IPs AND the public IP as ICE candidates: same-LAN
+    # viewers use the local one, off-LAN viewers use the public one (via STUN hole-punch).
+    # We do NOT drop local — forcing public-only breaks same-LAN because most home routers
+    # don't NAT-hairpin (a LAN client can't reach its own public IP).
+    env = dict(os.environ)
+    pip = public_ip()
+    if pip:
+        env["MTX_WEBRTCADDITIONALHOSTS"] = pip
     state["mtx"] = subprocess.Popen([MEDIAMTX, MTX_CFG], stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL, start_new_session=True)
+                                    stderr=subprocess.DEVNULL, start_new_session=True, env=env)
     time.sleep(1.5)
 
 
