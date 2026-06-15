@@ -191,18 +191,22 @@ def start_capture(kind, value):
                        "-offset_x", gx, "-offset_y", gy, "-video_size", size, "-i", "desktop"] + _scale_ffplay() + tail
             state["proc"] = _popen(cmd)
         else:
+            # Present through OpenGL via glimagesink. Steam Remote Play on Linux
+            # captures the "game" by hooking its GL presentation (gameoverlayrenderer
+            # intercepts glXSwapBuffers); ffplay's SDL output isn't reliably grabbed
+            # (guest sees black), but glimagesink renders via GL so the hook captures
+            # real frames. ximagesrc reads the X root (region or a specific window's
+            # xid — occlusion-proof under a compositor).
+            scale = _scale_caps_gst()   # "videoscale ! video/x-raw,width=W,height=H ! " or ""
             if kind == "window":
-                pipe = ("gst-launch-1.0 -q ximagesrc xid=%s use-damage=false ! videoconvert ! %smatroskamux streamable=true ! fdsink fd=1 "
-                        "| ffplay -loglevel error -f matroska -i - -an -noborder -left 100 -top 100 -window_title \"Discord-ish Screen Share\"") % (value, _scale_caps_gst())
-                state["proc"] = _popen(pipe, shell=True)
+                src = "ximagesrc xid=%s use-damage=false" % value
             else:
-                size = value.split("+")[0]
-                gx, gy = value.split("+")[1], value.split("+")[2]
-                vx, vy = pick_view(value)
-                cmd = ["ffplay", "-loglevel", "error", "-f", "x11grab", "-framerate", "30",
-                       "-video_size", size, "-i", "%s+%s,%s" % (DISPLAY, gx, gy)] + _scale_ffplay() + \
-                      ["-an", "-noborder", "-left", str(vx), "-top", str(vy), "-window_title", "Discord-ish Screen Share"]
-                state["proc"] = _popen(cmd)
+                gx = int(value.split("+")[1]); gy = int(value.split("+")[2])
+                w, h = value.split("+")[0].split("x")
+                ex = gx + int(w) - 1; ey = gy + int(h) - 1
+                src = "ximagesrc startx=%d starty=%d endx=%d endy=%d use-damage=false" % (gx, gy, ex, ey)
+            pipe = "gst-launch-1.0 -q %s ! videoconvert ! %sglimagesink" % (src, scale)
+            state["proc"] = _popen(pipe, shell=True)
 
 
 # ---- control server --------------------------------------------------------
