@@ -179,7 +179,11 @@
     var qs = geom ? ("?geom=" + encodeURIComponent(geom)) : "";
     return fetch(WCTL + "/start" + qs, { cache: "no-store" })
       .then(function (r) { return r.json(); })
-      .then(function (j) { window.__ds_share_url = j && j.whep; window.__ds_share_info = j; return j; })
+      .then(function (j) {
+        window.__ds_share_url = j && j.whep;                 // LAN/public url for the viewer
+        window.__ds_share_local = "http://127.0.0.1:8889/screen/whep";   // loopback for self-preview
+        window.__ds_share_info = j; return j;
+      })
       .catch(function (e) { console.warn("[ds] wStartShare", e); return null; });
   }
   function wStopShare() {
@@ -192,9 +196,9 @@
   // (/whep?target=) so the secure-context page can reach it (mixed-content workaround).
   function wConnectShare(whepUrl, v) {
     try {
-      if (window.__ds_pc) { try { window.__ds_pc.close(); } catch (e) {} }
+      if (v.__pc) { try { v.__pc.close(); } catch (e) {} }
       var pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-      window.__ds_pc = pc;
+      v.__pc = pc;
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.ontrack = function (e) { v.srcObject = e.streams[0]; if (v.play) v.play().catch(function () {}); };
       pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).then(function () {
@@ -396,6 +400,11 @@
     var spop = el(doc, "div", "ds-voice-settings"); spop.style.display = "none";
     var stitle = el(doc, "div", "ds-vs-title"); stitle.textContent = "Screen share"; spop.appendChild(stitle);
     var sstatus = el(doc, "div", "ds-vs-label ds-stream-status"); spop.appendChild(sstatus);
+    // self-preview: your own stream looped back via 127.0.0.1 (mixed-content-exempt, no
+    // call/friend needed) so you can verify the share is live just by clicking Share.
+    var sprev = el(doc, "video"); sprev.className = "ds-share-preview";
+    sprev.autoplay = true; sprev.muted = true; sprev.playsInline = true; sprev.style.display = "none";
+    spop.appendChild(sprev);
     // quality preset (best-effort — Steam exposes SetClientStreamingQuality)
     var qrow = el(doc, "div", "ds-vs-row");
     var qlbl = el(doc, "span", "ds-vs-label"); qlbl.textContent = "Quality";
@@ -412,8 +421,16 @@
       sgo.textContent = sharing ? "Stop sharing" : ("Share my screen to " + (chatFriendName(doc) || "friend"));
       sgo.classList.toggle("ds-stream-stop", sharing);
       sstatus.textContent = sharing
-        ? ("Sharing (" + ((window.__ds_share_info && window.__ds_share_info.encoder) || "?") + "). Link: " + (window.__ds_share_url || "starting…"))
+        ? ("Sharing live (" + ((window.__ds_share_info && window.__ds_share_info.encoder) || "?") + ") — preview below.")
         : "Streams a monitor to your friend — WebRTC, low latency, in-call.";
+      // self-preview loopback so you can confirm the share works solo
+      if (sharing) {
+        sprev.style.display = "block";
+        if (sprev.dataset.live !== "1" && window.__ds_share_local) { sprev.dataset.live = "1"; wConnectShare(window.__ds_share_local, sprev); }
+      } else {
+        sprev.style.display = "none"; sprev.dataset.live = "";
+        if (sprev.__pc) { try { sprev.__pc.close(); } catch (e) {} sprev.__pc = null; }
+      }
     };
     sgo.addEventListener("click", function () {
       if (window.__ds_share_mode === "webrtc") { wStopShare(); setTimeout(srefresh, 60); }
@@ -637,7 +654,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 24;
+  var VERSION = 25;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
