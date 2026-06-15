@@ -415,6 +415,17 @@
     qsel.addEventListener("change", function () { try { var R = rpRaw(); if (R && R.SetClientStreamingQuality) R.SetClientStreamingQuality(+qsel.value); } catch (e) {} });
     qrow.appendChild(qlbl); qrow.appendChild(qsel); spop.appendChild(qrow);
     var sgo = el(doc, "button", "ds-stream-go"); spop.appendChild(sgo);
+    // copyable link to YOUR share (host) — paste it to a friend so they can watch
+    var slink = el(doc, "input", "ds-vs-select"); slink.readOnly = true;
+    slink.style.cssText = "width:100%;margin-top:6px;display:none";
+    slink.addEventListener("click", function () { slink.select(); try { doc.execCommand("copy"); } catch (e) {} });
+    spop.appendChild(slink);
+    // watch SOMEONE ELSE's share (viewer) — paste their link + Watch
+    var wrow = el(doc, "div", "ds-vs-row"); wrow.style.marginTop = "8px";
+    var winput = el(doc, "input", "ds-vs-select"); winput.type = "text"; winput.placeholder = "paste link to watch"; winput.style.flex = "1 1 auto";
+    var wbtn = el(doc, "button", "ds-stream-go"); wbtn.textContent = "Watch"; wbtn.style.cssText = "width:auto;margin:0 0 0 6px";
+    wbtn.addEventListener("click", function () { var u = winput.value.trim(); if (u) { window.__ds_view_url = u; } });
+    wrow.appendChild(winput); wrow.appendChild(wbtn); spop.appendChild(wrow);
     var srefresh = function () {
       var sharing = window.__ds_share_mode === "webrtc";
       shareB.classList.toggle("sharing", sharing);
@@ -427,9 +438,11 @@
       if (sharing) {
         sprev.style.display = "block";
         if (sprev.dataset.live !== "1" && window.__ds_share_local) { sprev.dataset.live = "1"; wConnectShare(window.__ds_share_local, sprev); }
+        if (window.__ds_share_url) { slink.style.display = "block"; if (slink.value !== window.__ds_share_url) slink.value = window.__ds_share_url; }
       } else {
         sprev.style.display = "none"; sprev.dataset.live = "";
         if (sprev.__pc) { try { sprev.__pc.close(); } catch (e) {} sprev.__pc = null; }
+        slink.style.display = "none";
       }
     };
     sgo.addEventListener("click", function () {
@@ -654,7 +667,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 25;
+  var VERSION = 26;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
