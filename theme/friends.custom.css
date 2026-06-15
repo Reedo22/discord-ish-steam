@@ -98,6 +98,7 @@
 .FriendsListContent { flex-direction: column !important; }
 .FriendsListChatSection {
   order: -1 !important;                       /* move above the friends list */
+  background: #232428 !important;             /* recessed panel — distinct from the sidebar */
   border-bottom: 1px solid var(--dc-darkest) !important;
   padding-bottom: 4px !important;
 }
@@ -216,17 +217,43 @@
 .chatHeader:not(:empty) {
   display: flex !important;
   align-items: center !important;
-  justify-content: flex-end !important;
+  justify-content: space-between !important;   /* name on the left, controls on the right */
+  gap: 8px !important;
   min-height: 44px !important;
   padding: 0 14px !important;
   background: var(--dc-bg) !important;
   border-bottom: 1px solid var(--dc-darkest) !important;
 }
-/* screen-share (invite-to-watch) button in the chat header */
+/* pfp at the far left of the header bar */
+.ds-chat-avatar {
+  flex: 0 0 28px !important;
+  width: 28px !important; height: 28px !important;
+  border-radius: 50% !important;
+  background-size: cover !important; background-position: center !important;
+  background-color: var(--dc-darkest) !important;
+}
+/* conversation name, left side of the header bar (grows to push controls right) */
+.ds-chat-title {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  color: var(--dc-bright) !important;
+  font-size: 15px !important; font-weight: 700 !important;
+  white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important;
+}
+/* Steam's tab strip IS our single title bar (friend pfp + name + native drag),
+   always visible. We no longer build a custom header bar. */
+/* keep the controls grouped together on the right, vertically centered */
+.chatHeader:not(:empty) .ChatMessageEntryVoice,
+.chatHeader:not(:empty) .ds-share-wrap { flex: 0 0 auto !important; }
+/* screen-share button in the chat header — circular, matches the VoiceToggle */
 .ds-share {
-  width: 36px !important; height: 36px !important; border-radius: 8px !important;
+  width: 36px !important; height: 36px !important;
+  min-width: 36px !important; min-height: 36px !important;
+  border-radius: 50% !important;
   border: none !important; background: var(--dc-raise) !important; color: #fff !important;
-  font-size: 15px !important; cursor: pointer !important; margin-left: 8px !important;
+  font-size: 15px !important; line-height: 1 !important; cursor: pointer !important;
+  display: inline-flex !important; align-items: center !important; justify-content: center !important;
+  padding: 0 !important;
 }
 .ds-share:hover { background: var(--dc-accent) !important; }
 .ds-share-wrap { position: relative !important; display: inline-flex !important; margin-left: 8px !important; }
@@ -299,6 +326,9 @@ html.discordish-incall .chatRoomVoiceChannel,
 html.discordish-incall .voiceRoomDragBar {
   position: absolute !important; left: -99999px !important; top: 0 !important;
 }
+/* During a call our stage has the real mute/deafen/leave controls, so hide Steam's
+   header voice toggle — it turns green when active = the redundant "green mic". */
+html.discordish-incall .chatHeader .ChatMessageEntryVoice { display: none !important; }
 
 .discordish-stage {
   position: absolute !important;
@@ -374,6 +404,10 @@ html.discordish-incall .voiceRoomDragBar {
 .ds-btn svg { width: 22px !important; height: 22px !important; fill: #fff !important; }
 .ds-leave { background: #f23f43 !important; }
 .ds-leave:hover { background: #d83c3e !important; }
+/* screen-share toggle in the call bar — emoji glyph; turns red while sharing */
+.ds-share-ctrl { font-size: 20px !important; line-height: 1 !important; }
+.ds-share-ctrl.sharing { background: #f23f43 !important; }
+.ds-share-ctrl.sharing:hover { background: #d83c3e !important; }
 /* per-control settings dropdown (mic / speaker) */
 .ds-ctrl-group { position: relative !important; display: flex !important; align-items: center !important; }
 .ds-caret {
@@ -440,3 +474,84 @@ html.discordish-incall .voiceRoomDragBar {
   border: 1px solid transparent; font-size: 13px; cursor: pointer;
 }
 .ds-src-item:hover { background: var(--ds-accent, #5865f2); color: #fff; }
+
+/* ============================ Motion / micro-interactions ============================
+   Discord's polish is restraint: quick eased fades on hover, a small press dip on
+   buttons, one ambient "live" cue (the speaking ring), and soft entrances for panels.
+   Nothing loops or slides without reason. All of it is disabled under reduced-motion.
+   (No message-appear animation on purpose: Steam re-renders its virtualized history on
+   the plugin's 500ms poll, so it would re-fire and flicker.) */
+:root {
+  --dc-ease: cubic-bezier(.3, .7, .4, 1);  /* Discord-ish: quick out, gentle settle */
+  --dc-fast: 120ms;
+  --dc-base: 170ms;
+}
+
+/* Hover fades — the rows, status dot, and names ease instead of snapping. */
+.friend,
+.ChatRoomListGroupItem,
+.friendlistListContainer .friend {
+  transition: background-color var(--dc-base) var(--dc-ease),
+              color var(--dc-base) var(--dc-ease) !important;
+}
+.playerName,
+.nOdcT-MoOaXGePXLyPe0H,
+.chatRoomName { transition: color var(--dc-base) var(--dc-ease) !important; }
+.avatarStatus { transition: background-color var(--dc-base) var(--dc-ease) !important; }
+
+/* Buttons — colour/brightness ease in, and they dip slightly when pressed (Discord). */
+.ds-btn, .ds-share, .VoiceToggle, .ds-caret, .ds-src-item, .ds-stream-stop,
+.chatEntry button[title="Emoticon Picker"],
+.chatEntry button[title="Send Special"] {
+  transition: background-color var(--dc-fast) var(--dc-ease),
+              color var(--dc-fast) var(--dc-ease),
+              transform var(--dc-fast) var(--dc-ease) !important;
+}
+.ds-stream-go, .chatEntry button[type=submit] {
+  transition: filter var(--dc-fast) var(--dc-ease),
+              transform var(--dc-fast) var(--dc-ease) !important;
+}
+.ds-btn:active, .ds-share:active, .VoiceToggle:active, .ds-caret:active,
+.chatEntry button[type=submit]:active,
+.chatEntry button[title="Emoticon Picker"]:active,
+.chatEntry button[title="Send Special"]:active { transform: scale(.92) !important; }
+.ds-stream-go:active, .ds-stream-stop:active, .ds-src-item:active { transform: scale(.975) !important; }
+
+/* Call tiles ease their ring; the share tile (clickable) gets a faint hover lift. */
+.ds-tile { transition: box-shadow var(--dc-base) var(--dc-ease) !important; }
+.ds-share-tile { transition: box-shadow var(--dc-base) var(--dc-ease),
+                              transform var(--dc-base) var(--dc-ease) !important; }
+.ds-share-tile:hover { transform: translateY(-2px) !important; }
+
+/* The one ambient cue: a slow, shallow breathe on the active speaker's ring. */
+@keyframes dsSpeak {
+  0%, 100% { box-shadow: 0 0 0 3px var(--dc-online) !important; }
+  50%      { box-shadow: 0 0 0 5px var(--dc-online) !important; }
+}
+.ds-tile.speaking .ds-avatar { animation: dsSpeak 1.6s ease-in-out infinite !important; }
+
+/* Entrances — the stage drops in; popovers scale-fade up from their anchor. */
+@keyframes dsStageIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@keyframes dsPop { from { opacity: 0; transform: translateY(-6px) scale(.97); } to { opacity: 1; transform: none; } }
+/* the voice-settings popover is centered with translateX(-50%) — keep it through the anim */
+@keyframes dsPopCentered { from { opacity: 0; transform: translateX(-50%) translateY(-6px); } to { opacity: 1; transform: translateX(-50%); } }
+.discordish-stage { animation: dsStageIn var(--dc-base) var(--dc-ease); }
+.ds-stream-menu, .ds-src-list { animation: dsPop var(--dc-fast) var(--dc-ease); }
+.ds-voice-settings { animation: dsPopCentered var(--dc-fast) var(--dc-ease); }
+
+/* Minimize / expand glides instead of jumping. */
+.discordish-stage {
+  transition: width var(--dc-base) var(--dc-ease),
+              height var(--dc-base) var(--dc-ease),
+              inset var(--dc-base) var(--dc-ease),
+              border-radius var(--dc-base) var(--dc-ease) !important;
+}
+
+/* Accessibility floor: honour the OS "reduce motion" setting. */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+}

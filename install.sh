@@ -39,35 +39,41 @@ PY
 fi
 
 # (RemotePlayWhatever removed — the Remote Play session + invite are now created
-# natively by the plugin via the Spacewar/appid-480 launch hijack. No external binary.)
-command -v ffplay >/dev/null || echo "  ! ffplay (ffmpeg) not on PATH — needed for the screen-capture mirror." >&2
+# natively by the plugin via the real Spacewar/appid-480 RPT anchor + whole-desktop
+# streaming. No external binary, no capture server, no launch hijack.)
 
-# --- Spacewar-hider for the Remote Play share (xdotool watcher) ---
-# The Remote Play path uses Spacewar (480) as an invisible RPT anchor; this keeps
-# its window minimized so the whole-desktop stream doesn't show the demo.
-# Remote Play helpers: xdotool (Spacewar window-hider), wmctrl (app list),
-# gstreamer (occlusion-proof app capture via ximagesrc).
-if ! command -v xdotool >/dev/null || ! command -v wmctrl >/dev/null || ! command -v gst-launch-1.0 >/dev/null; then
-  echo "Installing xdotool + wmctrl + gstreamer (needs sudo)…"
-  if command -v apt-get >/dev/null; then sudo apt-get install -y xdotool wmctrl gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good || echo "  ! couldn't install Remote Play helpers — app-picker / occlusion-proof capture need them." >&2
-  elif command -v pacman  >/dev/null; then sudo pacman -S --noconfirm xdotool wmctrl gst-plugins-base gst-plugins-good || true
-  elif command -v dnf     >/dev/null; then sudo dnf install -y xdotool wmctrl gstreamer1-plugins-base gstreamer1-plugins-good || true
-  else echo "  ! install xdotool + wmctrl + gstreamer with your package manager for the Remote Play helpers." >&2; fi
+# --- REMOVE the old Spacewar-hider (it BREAKS streaming) ---
+# The hider minimized the Spacewar window; a minimized window presents no GL frames,
+# so Remote Play joins the session but the video never starts. Tear it down if a
+# previous install set it up.
+rm -f "$HOME/.config/autostart/discordish-rp-hide.desktop"
+pkill -x rp-hide-spacewar.sh 2>/dev/null || true
+
+# --- VIEWER-side fix: libvpx.so.6 for Steam's streaming client (appid 202355) ---
+# Steam's streaming_client links libvpx.so.6, but Ubuntu/Pop 24.04 ship libvpx9 only,
+# so the client crashes instantly on every accept. Steam's own runtime bundles a valid
+# libvpx.so.6 — install it system-wide so the client (launched outside the runtime with
+# only $ORIGIN RUNPATH, which doesn't cover transitive deps) can load it.
+if ! ldconfig -p 2>/dev/null | grep -q "libvpx.so.6"; then
+  SC_VPX="$(find "$HOME/.steam" "$HOME/.local/share/Steam" -path '*SteamLinuxRuntime_sniper*/libvpx.so.6.3.0' -type f 2>/dev/null | head -1)"
+  if [[ -n "$SC_VPX" ]]; then
+    echo "Installing libvpx.so.6 system-wide for Steam Remote Play (needs sudo)…"
+    sudo install -m0644 "$SC_VPX" /usr/lib/x86_64-linux-gnu/libvpx.so.6 && sudo ldconfig \
+      && echo "  installed libvpx.so.6" \
+      || echo "  ! couldn't install libvpx.so.6 — Remote Play streaming will crash on this machine." >&2
+  else
+    echo "  ! libvpx.so.6 missing and no bundled copy found — Remote Play streaming will crash here." >&2
+  fi
 fi
-# autostart on login (graphical session has DISPLAY), and start it now
-AUTOSTART="$HOME/.config/autostart"
-mkdir -p "$AUTOSTART"
-cat > "$AUTOSTART/discordish-rp-hide.desktop" <<EOF
-[Desktop Entry]
-Type=Application
-Name=Discord-ish RP Spacewar hider
-Exec=$HERE/rp-hide-spacewar.sh
-X-GNOME-Autostart-enabled=true
-NoDisplay=true
-EOF
-if command -v xdotool >/dev/null && ! pgrep -f "rp-hide-spacewar.sh" >/dev/null; then
-  nohup "$HERE/rp-hide-spacewar.sh" >/dev/null 2>&1 &
-  echo "Started Spacewar-hider watcher (autostarts on login)."
+
+# --- VIEWER-side WARNING: Millennium vs the streaming client ---
+# Millennium LD_PRELOADs libmillennium_hhx64.so into every Steam-launched process,
+# including the Remote Play streaming_client — which then exits in ~1s. If THIS machine
+# is used to RECEIVE streams, disable the 64-bit hook:
+#   sudo mv /usr/lib/millennium/libmillennium_hhx64.so{,.disabled}
+if [[ -f /usr/lib/millennium/libmillennium_hhx64.so ]]; then
+  echo "  ! NOTE: Millennium's libmillennium_hhx64.so breaks Steam Remote Play *receiving* on this box." >&2
+  echo "    If you watch streams here: sudo mv /usr/lib/millennium/libmillennium_hhx64.so{,.disabled}" >&2
 fi
 
 echo "RESTART Steam to load the plugin + clean-boot the CSS."

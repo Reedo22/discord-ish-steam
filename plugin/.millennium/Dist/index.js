@@ -58,13 +58,26 @@
   var WIN_LAUNCHER = "C:\\Users\\reedo\\discord-ish-steam\\rp-capture-launch.ps1";
   function rpRaw() { return window.SteamClient && window.SteamClient.RemotePlay; }
 
-  // Low-latency single-monitor (or single-app) Remote Play share. We hijack
-  // Spacewar's (480) launch so "launching Spacewar" actually runs our capture
-  // server (rp-capture.py) instead of the game — Steam still tracks it as 480, so
-  // it's RPT-eligible and Remote Play streams that window. The server stays alive
-  // for the whole share and lets us switch monitor/app/resolution live (it just
-  // restarts its ffplay child) WITHOUT dropping the RPT session. %command% (the
-  // real game) is handed to bash -c as ignored args, so the game never runs.
+  // PROVEN Remote Play Together share flow.
+  //
+  // We do NOT hijack Spacewar's launch anymore. The old approach pointed appid 480 at
+  // a fake ffplay/gstreamer "game" so RPT would stream that window — but on Linux RPT
+  // captures the game via its GL-presentation hook (gameoverlayrenderer/glXSwapBuffers),
+  // which never grabs ffplay/glimagesink output, so the guest always saw BLACK. The fix
+  // is to run the REAL Spacewar (480) under Proton as an RPT anchor (a genuine GL game
+  // Steam can capture), then switch on whole-desktop streaming and invite the friend.
+  //
+  // Hard-won gotchas baked in below (each cost hours):
+  //  - RunGame on an ALREADY-running app does NOT fire GroupCreated. To get a fresh
+  //    group we must TerminateApp first, wait, then RunGame.
+  //  - The groupID only arrives via the GroupCreated callback (the JS store never
+  //    tracks it). Invite immediately — an idle group disbands within seconds.
+  //  - NEVER minimize/hide the anchor window. A minimized window presents no frames
+  //    and the stream silently never starts (the old rp-hide-spacewar.sh broke this).
+  //  - VIEWER-side prereqs (see install.sh): the receiving machine's Steam
+  //    streaming_client (appid 202355) needs libvpx.so.6 present system-wide (it links
+  //    it; Ubuntu/Pop 24.04 ship libvpx9 only -> instant crash), and must NOT have
+  //    Millennium LD_PRELOADed into it (libmillennium_hhx64.so makes it exit in ~1s).
   function shareRP(doc) {
     try {
       var sid = friendSteamID64(doc);
@@ -72,46 +85,70 @@
       var RP = rpRaw();
       if (!RP) { console.warn("[ds] RP: SteamClient.RemotePlay missing"); return; }
       var A = window.SteamClient.Apps;
-      var cap = window.__ds_capOpts || { screen: "primary", scale: "1920x1080" };
-      var res = (cap.scale && cap.scale !== "none") ? cap.scale : "none";
-      // Linux passes explicit x11grab geometry; Windows passes the monitor keyword
-      // (rp-capture.py's resolve_geom enumerates the real geometry there via ctypes).
-      var geom = IS_WIN ? cap.screen : (MONITORS[cap.screen] || MONITORS.primary);
       window.__ds_share_mode = "remoteplay";
 
-      // ONE mechanism on both OSes (no RemotePlayWhatever): hijack Spacewar's (480)
-      // launch so "launching Spacewar" runs our capture server instead of the game.
-      // Steam still tracks the launch as appid 480 -> the group is RPT-eligible ->
-      // Remote Play streams that window. %command% (the real game path) is handed to
-      // bash -c / the PowerShell launcher as ignored trailing args, so the game never
-      // runs. Only the launch command differs per OS; the invite path is identical.
-      var hijack = IS_WIN
-        ? ('"' + WIN_POWERSHELL + '" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + WIN_LAUNCHER + '" ' + geom + " " + res + " %command%")
-        : ("bash -c 'exec python3 " + RPCAP + " " + geom + " " + res + "' %command%");
-      if (!IS_WIN) { try { A.ClearProton(480); } catch (e) {} }  // Linux only: run our native server, not the Windows .exe under Proton
-      try { A.SetAppLaunchOptions(480, hijack); } catch (e) {}
+      // Fast path: the anchor was pre-warmed when the call started (prewarmAnchor) —
+      // the group already exists, so just enable desktop streaming + invite. Instant.
+      if (window.__ds_anchor_warm && window.__ds_rpt_groupid != null) {
+        try { RP.SetStreamingDesktopToRemotePlayTogetherEnabled(window.__ds_rpt_groupid, true); } catch (e) {}
+        try { RP.CreateInviteAndSession(window.__ds_rpt_groupid, sid, false); } catch (e) { console.warn("[ds] invite", e); }
+        return;
+      }
+
+      // Cold path (no pre-warm): launch the anchor now.
+      // Linux: ensure 480 runs the REAL game under Proton (the bundled binary is the
+      // Windows .exe; without a compat tool it won't launch and no group is created).
+      if (!IS_WIN) { try { A.SpecifyCompatTool(SPACEWAR, "proton_experimental"); } catch (e) {} }
+
       var done = false, reg = null;
       var finish = function () { if (reg) { try { reg.unregister(); } catch (e) {} reg = null; } };
       reg = RP.RegisterForGroupCreated(function (groupID, hostSteam, gameid) {
-        if (done || String(gameid) !== SPACEWAR) return;       // ignore unrelated groups
+        if (done || String(gameid) !== SPACEWAR) return;        // ignore unrelated groups
         done = true;
-        window.__ds_rpt_groupid = groupID;                     // so "Stop sharing" can CloseGroup
+        window.__ds_rpt_groupid = groupID;                       // so "Stop sharing" can CloseGroup
+        // Stream the WHOLE desktop, not just the Spacewar window — the friend sees your
+        // actual screen. Spacewar is only the anchor that makes the RPT group exist.
+        try { RP.SetStreamingDesktopToRemotePlayTogetherEnabled(groupID, true); } catch (e) {}
         try { RP.CreateInviteAndSession(groupID, sid, false); } catch (e) { console.warn("[ds] invite", e); }
         finish();
       });
-      setTimeout(function () { if (!done) { finish(); console.warn("[ds] RP: Spacewar never created an RPT group (installed? launch-opts ok?)"); } }, 30000);
-      try { A.RunGame(SPACEWAR, "", -1, 100); } catch (e) { console.warn("[ds] launch Spacewar", e); }
+      setTimeout(function () { if (!done) { finish(); console.warn("[ds] RP: Spacewar never created an RPT group (installed? Proton set?)"); } }, 30000);
+
+      // Force a FRESH group: terminate any running 480, wait for it to die, relaunch.
+      try { A.TerminateApp(SPACEWAR, false); } catch (e) {}
+      setTimeout(function () { try { A.RunGame(SPACEWAR, "", -1, 100); } catch (e) { console.warn("[ds] launch Spacewar", e); } }, 3000);
     } catch (e) { console.warn("[ds] shareRP", e); }
   }
   function stopShareNative() {
     var RP = rpRaw(), A = window.SteamClient.Apps;
-    try { if (window.__ds_rpt_groupid != null && RP && RP.CloseGroup) RP.CloseGroup(window.__ds_rpt_groupid); } catch (e) {}
+    // CloseGroup's arity varies across Steam builds (some want (groupID), some 0 args);
+    // try both, then terminate the anchor game which disbands the group regardless.
+    try { if (RP && RP.CloseGroup) { try { RP.CloseGroup(window.__ds_rpt_groupid); } catch (e1) { try { RP.CloseGroup(); } catch (e2) {} } } } catch (e) {}
     window.__ds_rpt_groupid = null;
-    // Same teardown on both OSes now: kill the hijacked-480 process (stops the
-    // capture server + ffplay) and restore Spacewar's real launch options.
-    try { A.TerminateApp(SPACEWAR, false); } catch (e) {}
-    try { A.SetAppLaunchOptions(480, ""); } catch (e) {}
+    window.__ds_anchor_warm = false; window.__ds_anchor_warming = false;
+    try { A.TerminateApp(SPACEWAR, false); } catch (e) {}       // ends the anchor -> stream stops
     window.__ds_share_mode = null;
+  }
+
+  // Pre-warm the share anchor when a call starts so "Share" is near-instant — the slow
+  // part is launching Spacewar under Proton. Launch it in the background and stash its
+  // RPT groupID; shareRP's fast path then just enables desktop streaming + invites.
+  // NOTE: while warmed, Steam shows you "Playing Spacewar" for the whole call — set your
+  // Steam "Game details" privacy to Private to hide that (no per-game/API way exists).
+  function prewarmAnchor() {
+    if (window.__ds_anchor_warm || window.__ds_anchor_warming || window.__ds_share_mode === "remoteplay") return;
+    var RP = rpRaw(); if (!RP) return;
+    var A = window.SteamClient.Apps;
+    window.__ds_anchor_warming = true;
+    if (!IS_WIN) { try { A.SpecifyCompatTool(SPACEWAR, "proton_experimental"); } catch (e) {} }
+    var reg = RP.RegisterForGroupCreated(function (groupID, hostSteam, gameid) {
+      if (String(gameid) !== SPACEWAR) return;
+      window.__ds_rpt_groupid = groupID;
+      window.__ds_anchor_warm = true; window.__ds_anchor_warming = false;
+      try { reg.unregister(); } catch (e) {}
+    });
+    try { A.TerminateApp(SPACEWAR, false); } catch (e) {}
+    setTimeout(function () { try { A.RunGame(SPACEWAR, "", -1, 100); } catch (e) {} }, 3000);
   }
   // Live control of the running capture server (switch source / resolution without
   // dropping the RPT session). Reachable because Chromium lets https pages fetch
@@ -179,102 +216,11 @@
   }
 
   function chatTweaks(doc) {
-    doc.querySelectorAll(".chatWindow").forEach(function (win) {
-      var header = win.querySelector(".chatHeader");
-      var voice = win.querySelector(".ChatMessageEntryVoice");
-      if (header && voice && !header.contains(voice)) header.appendChild(voice);
-      // screen-share / stream menu in the chat header
-      if (header && !header.querySelector(".ds-share-wrap")) {
-        var wrap = el(doc, "div", "ds-share-wrap");
-        var sb = el(doc, "button", "ds-share");
-        sb.title = "Screen share — pick a monitor or app and Remote Play it to this friend";
-        sb.textContent = "🖥";
-        var menu = el(doc, "div", "ds-stream-menu");
-        menu.style.display = "none";
-
-        var streamSelect = function (label, opts, onPick) {
-          var row = el(doc, "div", "ds-vs-row");
-          var sp = el(doc, "span", "ds-vs-label"); sp.textContent = label;
-          var sel = el(doc, "select", "ds-vs-select");
-          opts.forEach(function (o, i) { var op = doc.createElement("option"); op.value = i; op.textContent = o[0]; sel.appendChild(op); });
-          sel.addEventListener("change", function () { onPick(opts[+sel.value][1]); });
-          row.appendChild(sp); row.appendChild(sel); menu.appendChild(row);
-        };
-
-        // ---- Source & quality (used by both shares; live-switchable during RP) ----
-        var st = el(doc, "div", "ds-vs-title"); st.textContent = "Source & quality"; menu.appendChild(st);
-        var capOpts = { screen: "primary", scale: "1920x1080" };
-        window.__ds_capOpts = capOpts;
-        streamSelect("Monitor", [["Primary", "primary"], ["Secondary", "secondary"]], function (v) {
-          capOpts.screen = v;
-          if (window.__ds_share_mode === "remoteplay") rpSetSource(MONITORS[v] || MONITORS.primary);   // live switch
-        });
-        streamSelect("Resolution", [["1080p", "1920x1080"], ["1440p", "2560x1440"], ["4K (native)", "none"]], function (v) {
-          capOpts.scale = v;
-          if (window.__ds_share_mode === "remoteplay") rpSetRes(v === "none" ? "none" : v);             // live switch
-        });
-
-        var nm = chatFriendName(doc) || "friend";
-        var status = el(doc, "div", "ds-vs-label ds-stream-status");
-        var setStatus = function (t) { status.textContent = t; };
-
-        // Source switcher — monitors + app windows, live from the capture server.
-        var srcWrap = el(doc, "div", "ds-src-list"); srcWrap.style.display = "none";
-        function fillSources(triesLeft) {
-          srcWrap.style.display = "block";
-          if (!srcWrap.childNodes.length) srcWrap.textContent = "Loading sources…";
-          rpSources(function (s) {
-            if (!s) {
-              if (triesLeft > 0) { setTimeout(function () { fillSources(triesLeft - 1); }, 1000); return; }   // server still coming up
-              srcWrap.textContent = "Capture server not running — start Remote Play first.";
-              return;
-            }
-            srcWrap.textContent = "";
-            (s.monitors || []).forEach(function (m) {
-              var b = el(doc, "button", "ds-src-item"); b.textContent = "🖥 " + m.name + (m.primary ? " (primary)" : "");
-              b.addEventListener("click", function () { rpSetSource(m.geom); setStatus("Now sharing monitor " + m.name + "."); });
-              srcWrap.appendChild(b);
-            });
-            (s.windows || []).forEach(function (w) {
-              var b = el(doc, "button", "ds-src-item"); b.textContent = "🪟 " + (w.title.length > 32 ? w.title.slice(0, 32) + "…" : w.title);
-              b.addEventListener("click", function () { rpSetWindow(w.id); setStatus("Now sharing app: " + w.title); });
-              srcWrap.appendChild(b);
-            });
-            if (!(s.windows || []).length) {
-              var note = el(doc, "div", "ds-vs-label"); note.textContent = "(no app windows — needs wmctrl: run install.sh)"; srcWrap.appendChild(note);
-            }
-          });
-        }
-
-        // Primary: low-latency single monitor/app via our capture server.
-        var rp = el(doc, "button", "ds-stream-go"); rp.textContent = "Remote Play " + nm + " · low latency";
-        rp.title = "Streams one monitor or app over Remote Play Together — low latency. Pick the source below; they must accept the invite.";
-        rp.addEventListener("click", function () {
-          shareRP(doc);
-          setStatus("Sent " + nm + " a Remote Play invite — they must accept. Pick a monitor or app below.");
-          srcWrap.textContent = "";
-          setTimeout(function () { fillSources(8); }, 1500);   // auto-open the picker once the server is up
-        });
-        menu.appendChild(rp);
-
-        var srcBtn = el(doc, "button", "ds-stream-go"); srcBtn.textContent = "Choose monitor / app ▾";
-        srcBtn.title = "Switch which monitor or app window is shared, live (no re-invite).";
-        srcBtn.addEventListener("click", function () {
-          if (srcWrap.style.display !== "none") { srcWrap.style.display = "none"; return; }
-          fillSources(2);
-        });
-        menu.appendChild(srcBtn);
-        menu.appendChild(srcWrap);
-
-        var stop = el(doc, "button", "ds-stream-stop"); stop.textContent = "Stop sharing";
-        stop.addEventListener("click", function () { stopShareNative(); setStatus("Stopped sharing."); });
-        menu.appendChild(stop);
-        menu.appendChild(status);
-
-        sb.addEventListener("click", function () { menu.style.display = menu.style.display === "none" ? "block" : "none"; });
-        wrap.appendChild(sb); wrap.appendChild(menu); header.appendChild(wrap);
-      }
-    });
+    // The single header bar is Steam's OWN tab strip (.chatTabList) — CSS styles it to
+    // show only the active conversation (the friend's real pfp + name) and it stays the
+    // native window-drag bar. We deliberately do NOT build a custom header bar: doing so
+    // duplicated the bar, broke window dragging, and pulled the wrong (current-user)
+    // avatar. The screen-share toggle lives in the in-call control bar (buildControls).
     var name = chatFriendName(doc);
     doc.querySelectorAll(".chatEntry textarea").forEach(function (ta) {
       if (!ta.placeholder) ta.placeholder = name ? "Message " + name + "…" : "Message…";
@@ -377,6 +323,48 @@
       addSelect(pop, "Device", "GetSelectedOutputDevice", "SetSelectedOutput", "audiooutput");
       addSlider(pop, "Output Volume", "GetVoiceOutputGain", "SetVoiceOutputGain");
     });
+    // screen-share control + popover (sits with the call controls, before Leave).
+    // Clicking the 🖥 opens a small panel: status, quality, and a start/stop button —
+    // the button itself glows red while you're sharing. Whole-desktop Remote Play.
+    var shareG = el(doc, "div", "ds-ctrl-group");
+    var shareB = el(doc, "button", "ds-btn ds-share-ctrl");
+    shareB.title = "Screen share"; shareB.textContent = "🖥";
+    var spop = el(doc, "div", "ds-voice-settings"); spop.style.display = "none";
+    var stitle = el(doc, "div", "ds-vs-title"); stitle.textContent = "Screen share"; spop.appendChild(stitle);
+    var sstatus = el(doc, "div", "ds-vs-label ds-stream-status"); spop.appendChild(sstatus);
+    // quality preset (best-effort — Steam exposes SetClientStreamingQuality)
+    var qrow = el(doc, "div", "ds-vs-row");
+    var qlbl = el(doc, "span", "ds-vs-label"); qlbl.textContent = "Quality";
+    var qsel = el(doc, "select", "ds-vs-select");
+    [["Automatic", 0], ["Fast", 1], ["Balanced", 2], ["Beautiful", 3]].forEach(function (o) {
+      var op = doc.createElement("option"); op.value = o[1]; op.textContent = o[0]; qsel.appendChild(op);
+    });
+    qsel.addEventListener("change", function () { try { var R = rpRaw(); if (R && R.SetClientStreamingQuality) R.SetClientStreamingQuality(+qsel.value); } catch (e) {} });
+    qrow.appendChild(qlbl); qrow.appendChild(qsel); spop.appendChild(qrow);
+    var sgo = el(doc, "button", "ds-stream-go"); spop.appendChild(sgo);
+    var srefresh = function () {
+      var sharing = window.__ds_share_mode === "remoteplay";
+      shareB.classList.toggle("sharing", sharing);
+      sgo.textContent = sharing ? "Stop sharing" : ("Share my screen to " + (chatFriendName(doc) || "friend"));
+      sgo.classList.toggle("ds-stream-stop", sharing);
+      sstatus.textContent = sharing
+        ? "Sharing your screen — they must accept the Remote Play invite."
+        : "Streams your whole screen to this friend over Remote Play.";
+    };
+    sgo.addEventListener("click", function () {
+      if (window.__ds_share_mode === "remoteplay") stopShareNative(); else shareRP(doc);
+      setTimeout(srefresh, 50);
+    });
+    shareB.addEventListener("click", function (e) {
+      e.stopPropagation();
+      [].forEach.call(stage.querySelectorAll(".ds-voice-settings"), function (pp) { if (pp !== spop) pp.style.display = "none"; });
+      var show = spop.style.display !== "block";
+      spop.style.display = show ? "block" : "none";
+      if (show) srefresh();
+    });
+    shareG.appendChild(shareB); shareG.appendChild(spop);
+    bar.appendChild(shareG);
+
     ctrlGroup("leave", "Leave", ".chatEndVoiceChat", null);
 
     stage.appendChild(bar);
@@ -400,6 +388,14 @@
     var src = doc.querySelector(".OneOnOneVoiceMembers") || doc.querySelector(".VoiceChannelParticipants");
     var hasControls = !!doc.querySelector(".activeVoiceButtons");
     var inCall = !!src && hasControls;
+
+    // Pre-warm the share anchor as soon as a call starts so "Share" is near-instant.
+    if (inCall) { try { prewarmAnchor(); } catch (e) {} }
+    // When the call ends, tear everything down: close the RPT group + terminate the
+    // Spacewar anchor (whether we were sharing OR just pre-warmed) so nothing lingers.
+    if (!inCall && (window.__ds_share_mode === "remoteplay" || window.__ds_anchor_warm || window.__ds_anchor_warming)) {
+      try { stopShareNative(); } catch (e) {}
+    }
 
     var wins = [].slice.call(doc.querySelectorAll(".chatWindow"));
     var win = wins.filter(function (w) { return w.getBoundingClientRect().width > 0; })[0];
@@ -510,6 +506,7 @@
     // sync control icons from Steam's real SVGs (also reflects mute/deafen state)
     stage.querySelectorAll(".ds-btn").forEach(function (b) {
       var sel = b.dataset.src;
+      if (!sel) return;   // share button has no Steam source — keep its 🖥 glyph
       var orig = doc.querySelector(".activeVoiceButtons " + sel) || doc.querySelector(sel);
       var svg = orig && orig.querySelector("svg");
       if (svg && b.dataset.icon !== svg.outerHTML) {
@@ -517,6 +514,9 @@
         b.innerHTML = svg.outerHTML;
       }
     });
+    // reflect live share state on the share control (red while sharing)
+    var sc = stage.querySelector(".ds-share-ctrl");
+    if (sc) sc.classList.toggle("sharing", window.__ds_share_mode === "remoteplay");
   }
 
   // Auto-update (no Python): pull the latest reskin CSS straight from the repo and
@@ -571,7 +571,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 13;
+  var VERSION = 21;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
