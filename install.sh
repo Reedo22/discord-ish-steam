@@ -38,22 +38,8 @@ else:
 PY
 fi
 
-# --- RemotePlayWhatever (low-latency Remote Play screen share) ---
-# Hosts the RPT session under Spacewar (AppID 480) and sends the invite; the
-# capture script (stream-capture.sh) calls it. Fetched here so it's not a
-# committed 14MB binary. Skip silently if already present.
-RPW="$HERE/bin/remoteplaywhatever-x86_64.AppImage"
-RPW_URL="https://github.com/m4dEngi/RemotePlayWhatever/releases/download/0.2.14-alpha/remoteplaywhatever-x86_64.AppImage"
-if [[ ! -x "$RPW" ]]; then
-  mkdir -p "$HERE/bin"
-  if command -v curl >/dev/null; then
-    echo "Fetching RemotePlayWhatever…"
-    curl -fsSL -o "$RPW" "$RPW_URL" && chmod +x "$RPW" && echo "  -> $RPW" \
-      || echo "  ! failed to download RemotePlayWhatever — Remote Play share won't work until it's at $RPW" >&2
-  else
-    echo "  ! curl not found — download RemotePlayWhatever manually to $RPW" >&2
-  fi
-fi
+# (RemotePlayWhatever removed — the Remote Play session + invite are now created
+# natively by the plugin via the Spacewar/appid-480 launch hijack. No external binary.)
 command -v ffplay >/dev/null || echo "  ! ffplay (ffmpeg) not on PATH — needed for the screen-capture mirror." >&2
 
 # --- Spacewar-hider for the Remote Play share (xdotool watcher) ---
