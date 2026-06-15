@@ -446,8 +446,15 @@
       }
     };
     sgo.addEventListener("click", function () {
-      if (window.__ds_share_mode === "webrtc") { wStopShare(); setTimeout(srefresh, 60); }
-      else { wStartShare(window.__ds_share_geom).then(function () { srefresh(); }); }
+      if (window.__ds_share_mode === "webrtc") {
+        try { sendSignal(doc, "stop"); } catch (e) {}     // tell the viewer to disconnect
+        wStopShare(); setTimeout(srefresh, 60);
+      } else {
+        wStartShare(window.__ds_share_geom).then(function () {
+          if (window.__ds_share_url) { try { sendSignal(doc, window.__ds_share_url); } catch (e) {} }  // auto-signal the viewer
+          srefresh();
+        });
+      }
     });
     shareB.addEventListener("click", function (e) {
       e.stopPropagation();
@@ -639,11 +646,68 @@
     if (st.textContent !== _cssText) st.textContent = _cssText;
   }
 
+  // === auto-signaling over Steam chat ======================================
+  // The host sends "ds-screenshare::<url>" (or ::stop) to the friend over chat; the
+  // viewer polls friend chats for it and sets window.__ds_view_url so the call tile
+  // connects with no pasting. We hide these marker messages from the chat history.
+  var SIG = "ds-screenshare::";
+  window.__ds_sig_seen = window.__ds_sig_seen || {};   // per-friend last-processed ordinal
+  function friendAcctForDoc(doc) {
+    try {
+      var name = chatFriendName(doc).toLowerCase();
+      var f = (window.g_FriendsUIApp.m_FriendStore.all_friends || []).find(function (x) {
+        var p = x.m_persona || {};
+        return [x.m_strNickname, p.m_strPlayerName].some(function (n) { return n && ("" + n).toLowerCase() === name; });
+      });
+      return f ? f.m_unAccountID : null;
+    } catch (e) { return null; }
+  }
+  function sendSignal(doc, payload) {
+    try {
+      var acct = friendAcctForDoc(doc); if (acct == null) return;
+      var fc = window.g_FriendsUIApp.m_ChatStore.GetFriendChat(acct);
+      if (fc && fc.SendChatMessageInternal) fc.SendChatMessageInternal(SIG + payload);
+    } catch (e) { console.warn("[ds] sendSignal", e); }
+  }
+  function pollSignals() {
+    try {
+      var app = window.g_FriendsUIApp, fs = app.m_FriendStore, cs = app.m_ChatStore;
+      (fs.all_friends || []).forEach(function (f) {
+        var fc = cs.GetFriendChat(f.m_unAccountID);
+        var msgs = fc && fc.m_rgChatMessages;
+        if (!msgs || !msgs.length) return;
+        for (var i = msgs.length - 1; i >= 0 && i >= msgs.length - 6; i--) {
+          var m = msgs[i];
+          if (!m.strMessageInternal || m.strMessageInternal.indexOf(SIG) !== 0) continue;
+          if (m.unAccountID !== f.m_unAccountID) continue;   // only act on what the FRIEND sent
+          var ord = m.unOrdinal || i;
+          if ((window.__ds_sig_seen[f.m_unAccountID] || 0) >= ord) break;   // already handled
+          window.__ds_sig_seen[f.m_unAccountID] = ord;
+          var payload = m.strMessageInternal.slice(SIG.length);
+          window.__ds_view_url = (payload === "stop") ? null : payload;
+          break;
+        }
+      });
+    } catch (e) {}
+  }
+  function hideSignalMessages(doc) {
+    try {
+      doc.querySelectorAll(".msg, [class*=Message]").forEach(function (el) {
+        if (el.dataset.dsHidden) return;
+        if ((el.textContent || "").indexOf(SIG) >= 0) { el.style.display = "none"; el.dataset.dsHidden = "1"; }
+      });
+    } catch (e) {}
+  }
+
+  var __ds_tickn = 0;
   function tick() {
+    __ds_tickn++;
+    if (__ds_tickn % 7 === 0) { try { pollSignals(); } catch (e) {} }   // ~every 1s
     friendsDocs().forEach(function (doc) {
       try { injectCSS(doc); } catch (e) {}
       try { chatTweaks(doc); } catch (e) {}
       try { callStage(doc); } catch (e) {}
+      try { hideSignalMessages(doc); } catch (e) {}
     });
   }
 
@@ -667,7 +731,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 26;
+  var VERSION = 27;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
