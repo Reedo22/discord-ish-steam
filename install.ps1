@@ -14,7 +14,9 @@ Write-Host "== discord-ish-steam Windows installer =="
 
 # 1) clone or update the repo
 if (Test-Path (Join-Path $repo ".git")) {
-    Write-Host "Updating repo at $repo"; git -C $repo pull --ff-only
+    Write-Host "Updating repo at $repo"
+    try { git -C $repo pull --ff-only 2>&1 | Out-Host; if ($LASTEXITCODE -ne 0) { throw "pull exit $LASTEXITCODE" } }
+    catch { Write-Warning "git pull failed ($($_.Exception.Message)) - continuing with the existing clone." }
 } else {
     Write-Host "Cloning into $repo"; git clone $repoUrl $repo
 }
@@ -32,6 +34,10 @@ foreach ($r in $roots) {
 }
 if (-not $cfgFile) { throw "Could not find Millennium config.json (with enabledPlugins). Is Millennium installed and run at least once?" }
 $millennium = Split-Path $cfgFile -Parent
+# Current Millennium keeps config.json in a "config" subfolder while plugins\ and
+# quickcss.css live in the parent (the real Millennium root). Walk up if needed so
+# the plugin/theme land where Steam actually loads them.
+if ((Split-Path $millennium -Leaf) -eq "config") { $millennium = Split-Path $millennium -Parent }
 Write-Host "Found Millennium: $millennium"
 
 $quickcss   = Join-Path $millennium "quickcss.css"
@@ -69,7 +75,8 @@ if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
 }
 
 # 7) fetch the Windows host binaries (MediaMTX + cloudflared) into bin\
-& (Join-Path $repo "bin\fetch-windows.ps1")
+try { & (Join-Path $repo "bin\fetch-windows.ps1") }
+catch { Write-Warning "Couldn't fetch host binaries ($($_.Exception.Message)). Re-run bin\fetch-windows.ps1 later; theme/plugin still installed." }
 
 # 8) register a logon task so the daemon is always up (mirrors the Linux systemd service)
 if ($py) {
@@ -79,8 +86,22 @@ if ($py) {
     $action  = New-ScheduledTaskAction -Execute $pyw -Argument "`"$daemon`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $set     = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
-    Register-ScheduledTask -TaskName "discordish-rp-webrtc" -Action $action -Trigger $trigger -Settings $set -Force | Out-Null
-    Write-Host "Registered logon task 'discordish-rp-webrtc' (auto-starts the screen-share daemon)."
+    try {
+        Register-ScheduledTask -TaskName "discordish-rp-webrtc" -Action $action -Trigger $trigger -Settings $set -Force | Out-Null
+        Write-Host "Registered logon task 'discordish-rp-webrtc' (auto-starts the screen-share daemon)."
+    } catch {
+        # Task registration can need elevation; fall back to a Startup-folder shortcut so
+        # the daemon still auto-starts at logon without aborting the install.
+        Write-Warning "Couldn't register the logon task ($($_.Exception.Message)) - using a Startup shortcut instead."
+        try {
+            $startup = [Environment]::GetFolderPath('Startup')
+            $lnk = Join-Path $startup "discordish-rp-webrtc.lnk"
+            $ws = New-Object -ComObject WScript.Shell
+            $sc = $ws.CreateShortcut($lnk)
+            $sc.TargetPath = $pyw; $sc.Arguments = "`"$daemon`""; $sc.WindowStyle = 7; $sc.Save()
+            Write-Host "Created Startup shortcut $lnk"
+        } catch { Write-Warning "Startup shortcut also failed ($($_.Exception.Message)); start rp-webrtc.py manually." }
+    }
     Start-Process $pyw -ArgumentList "`"$daemon`"" -WindowStyle Hidden
     Write-Host "Started the screen-share daemon."
 }

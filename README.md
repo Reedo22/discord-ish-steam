@@ -34,10 +34,14 @@ cd ~/discord-ish-steam && ./install.sh
 ```
 
 **Windows — all-in-one** (PowerShell): from a base Steam install to the finished reskin.
-Installs prerequisites (git, Python, ffmpeg), Millennium, then the plugin + daemon:
+Installs prerequisites (git, Python, ffmpeg), Millennium, then the plugin + daemon.
+Run it in an **Administrator** PowerShell so the screen-share daemon's logon task can
+register (it falls back to a Startup shortcut if not elevated):
 ```powershell
 irm https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/install-all.ps1 | iex
 ```
+If you downloaded the script instead of using the one-liner, run it past the
+execution policy with: `powershell -ExecutionPolicy Bypass -File .\install-all.ps1`
 
 **Windows — plugin only** (if Millennium is already installed):
 ```powershell

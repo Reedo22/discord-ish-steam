@@ -1,10 +1,12 @@
-# discord-ish-steam — Windows ALL-IN-ONE installer.
+# discord-ish-steam - Windows ALL-IN-ONE installer.
 # From a base Steam install to the finished reskin in one command:
 #   prerequisites (git, Python, ffmpeg) -> Millennium -> Steam first-run -> plugin + daemon.
 # Run in PowerShell:
 #   irm https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/install-all.ps1 | iex
+# (If you downloaded this file instead, run it past the execution policy with:
+#   powershell -ExecutionPolicy Bypass -File .\install-all.ps1 )
 $ErrorActionPreference = "Stop"
-Write-Host "== discord-ish-steam — all-in-one Windows installer =="
+Write-Host "== discord-ish-steam - all-in-one Windows installer =="
 
 # 1) prerequisites via winget
 function Need($cmd, $id) {
@@ -22,7 +24,7 @@ $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Env
 
 # 2) Steam present?
 $steam = @("C:\Program Files (x86)\Steam\steam.exe","C:\Program Files\Steam\steam.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $steam) { Write-Warning "Steam not found - install it from https://store.steampowered.com first, then re-run."; }
+if (-not $steam) { Write-Warning "Steam not found - install it from https://store.steampowered.com first, then re-run." }
 
 # 3) Millennium (official signed installer)
 Write-Host "Installing Millennium ..."
@@ -30,7 +32,7 @@ try { iwr -useb "https://steambrew.app/install.ps1" | iex } catch { Write-Warnin
 
 # 4) Millennium writes its config.json only after Steam runs once with it. Launch Steam and wait.
 function Find-MillenniumCfg {
-  $roots = @($env:USERPROFILE,$env:LOCALAPPDATA,$env:APPDATA) | Where-Object { $_ -and (Test-Path $_) }
+  $roots = @($env:USERPROFILE,$env:LOCALAPPDATA,$env:APPDATA,"C:\Program Files (x86)\Steam","C:\Program Files\Steam") | Where-Object { $_ -and (Test-Path $_) }
   foreach ($r in $roots) {
     $hit = Get-ChildItem -Path $r -Recurse -Depth 4 -Filter config.json -ErrorAction SilentlyContinue |
       Where-Object { try { (Get-Content $_.FullName -Raw) -match '"enabledPlugins"' } catch { $false } } | Select-Object -First 1
@@ -51,4 +53,4 @@ Write-Host "Installing discord-ish-steam ..."
 iwr -useb "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/install.ps1" | iex
 
 Write-Host ""
-Write-Host "ALL DONE. Fully restart Steam, then enable Settings -> Friends & Chat -> 'Dock chats to the friends list'."
+Write-Host "ALL DONE. Fully restart Steam, then enable Settings -> Friends and Chat -> 'Dock chats to the friends list'."
