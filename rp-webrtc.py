@@ -109,6 +109,30 @@ def monitors():
     return out
 
 
+def windows():
+    """App windows with on-screen geometry, so 'share an app' = capture that region.
+    (Reuses the x11grab pipeline; the window must stay visible/un-occluded.)"""
+    out = []
+    try:
+        wm = subprocess.run(["wmctrl", "-lG"], capture_output=True, text=True,
+                            env={**os.environ, "DISPLAY": DISPLAY}).stdout
+        for line in wm.splitlines():
+            f = line.split(None, 7)            # id desktop x y w h host title
+            if len(f) < 8:
+                continue
+            desk, x, y, w, h, title = f[1], f[2], f[3], f[4], f[5], f[7]
+            if desk == "-1":                   # skip desktop/panels
+                continue
+            if title.startswith("Desktop @") or title in ("Plasma", "Desktop") or "—" == title:
+                continue
+            if int(w) < 120 or int(h) < 100:
+                continue
+            out.append({"id": f[0], "title": title, "geom": "%sx%s+%s+%s" % (w, h, x, y)})
+    except Exception:
+        pass
+    return out
+
+
 def ensure_mediamtx():
     if state["mtx"] and state["mtx"].poll() is None:
         return
@@ -226,7 +250,7 @@ class H(BaseHTTPRequestHandler):
         whep = "http://%s:%d/screen/whep" % (ip, WHEP_PORT)
         lan_whep = whep
         if u.path == "/sources":
-            self._send({"monitors": monitors(), "encoder": pick_encoder()[0]})
+            self._send({"monitors": monitors(), "windows": windows(), "encoder": pick_encoder()[0]})
         elif u.path == "/start":
             geom = q.get("geom", [None])[0]
             if not geom:

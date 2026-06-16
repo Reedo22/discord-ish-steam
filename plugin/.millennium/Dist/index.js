@@ -407,6 +407,29 @@
     shareB.title = "Screen share"; shareB.textContent = "🖥";
     var spop = el(doc, "div", "ds-voice-settings"); spop.style.display = "none";
     var stitle = el(doc, "div", "ds-vs-title"); stitle.textContent = "Screen share"; spop.appendChild(stitle);
+    // source picker: a monitor OR a specific app window (per-app share). Both are just a
+    // screen region the daemon captures via x11grab — pick one; it goes into __ds_share_geom.
+    var ssrcRow = el(doc, "div", "ds-vs-row");
+    var ssrcLbl = el(doc, "span", "ds-vs-label"); ssrcLbl.textContent = "Source";
+    var ssrc = el(doc, "select", "ds-vs-select");
+    ssrc.addEventListener("change", function () { window.__ds_share_geom = ssrc.value; });
+    ssrcRow.appendChild(ssrcLbl); ssrcRow.appendChild(ssrc); spop.appendChild(ssrcRow);
+    var fillSources = function () {
+      fetch(WCTL + "/sources", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
+        ssrc.textContent = "";
+        (j.monitors || []).forEach(function (m, i) {
+          var o = doc.createElement("option"); o.value = m.geom;
+          o.textContent = "Monitor " + (i + 1) + (m.primary ? " ★" : "") + " (" + m.name + ")"; ssrc.appendChild(o);
+        });
+        (j.windows || []).forEach(function (wn) {
+          var o = doc.createElement("option"); o.value = wn.geom;
+          o.textContent = "🪟 " + (wn.title.length > 32 ? wn.title.slice(0, 32) + "…" : wn.title); ssrc.appendChild(o);
+        });
+        if (window.__ds_share_geom) ssrc.value = window.__ds_share_geom;
+        if (!ssrc.value && ssrc.options.length) ssrc.value = ssrc.options[0].value;
+        window.__ds_share_geom = ssrc.value || window.__ds_share_geom;
+      }).catch(function () {});
+    };
     var sstatus = el(doc, "div", "ds-vs-label ds-stream-status"); spop.appendChild(sstatus);
     // self-preview: your own stream looped back via 127.0.0.1 (mixed-content-exempt, no
     // call/friend needed) so you can verify the share is live just by clicking Share.
@@ -456,7 +479,7 @@
       [].forEach.call(stage.querySelectorAll(".ds-voice-settings"), function (pp) { if (pp !== spop) pp.style.display = "none"; });
       var show = spop.style.display !== "block";
       spop.style.display = show ? "block" : "none";
-      if (show) srefresh();
+      if (show) { fillSources(); srefresh(); }
     });
     shareG.appendChild(shareB); shareG.appendChild(spop);
     bar.appendChild(shareG);
@@ -786,7 +809,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 33;
+  var VERSION = 34;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
