@@ -67,6 +67,13 @@
 
 /* circular avatars + status ring */
 .avatarHolder, .avatar { border-radius: 50% !important; }
+/* ...EXCEPT when an equipped *animated* avatar frame is present. Steam renders the
+   frame as a <video> inside the holder and it's square; forcing the avatar circular
+   clips the frame and misaligns it. When a frame video exists, keep that avatar +
+   holder square so the frame renders correctly. (CEF supports :has().) */
+.avatarHolder:has(video),
+.avatarHolder:has(video) .avatar { border-radius: 0 !important; }
+.avatarHolder:has(video) { overflow: visible !important; }
 .avatarStatus { border: 3px solid var(--dc-sidebar) !important; border-radius: 50% !important; }
 .friend.online  .avatarStatus { background: var(--dc-online)  !important; }
 .friend.ingame  .avatarStatus { background: var(--dc-accent)  !important; }
@@ -86,6 +93,13 @@
 
 /* clean, slightly tighter rows */
 .friendlistListContainer .friend { padding: 4px 8px !important; margin: 0 6px !important; }
+
+/* avatars in list rows sat indented from the row's left edge (Steam gives the
+   holder a left margin), so every pfp looked shoved right of where the name/
+   message column starts. Pull the avatar flush to the row's left edge. */
+.friendlistListContainer .friend .avatarHolder,
+.ChatRoomListGroupItem .avatarHolder,
+.ChatRoomListGroupItem .ChatRoomMultiFriendAvatar { margin-left: 0 !important; }
 
 /* clearer little status dot in the list */
 .friendlistListContainer .friend .avatarHolder .avatarStatus {
