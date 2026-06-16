@@ -714,13 +714,12 @@
       var main = win.querySelector(".ChatHistoryContainer");
       if (!main) { if (existing) existing.remove(); return; }
       var incoming = !!native.querySelector(".inviteButtonJoinVoice");   // accept button = they're calling you
-      var name = chatFriendName(doc) || "Friend";
-      var f = (window.g_FriendsUIApp.m_FriendStore.all_friends || []).find(function (x) {
-        var pp = x.m_persona || {};
-        return [x.m_strNickname, pp.m_strPlayerName].some(function (n) { return n && ("" + n).toLowerCase() === name.toLowerCase(); });
-      });
-      var p = f && f.m_persona;
-      var avatar = p && p.m_strAvatarHash ? ("https://avatars.steamstatic.com/" + p.m_strAvatarHash + "_full.jpg") : "";
+      // Read name + avatar straight from the native ring (always correct, unlike the chat title)
+      var nameEl = native.querySelector(".nOdcT-MoOaXGePXLyPe0H, [class*=VoiceStatusLab]");
+      var name = (nameEl ? nameEl.textContent : "").replace(/\s*would like[\s\S]*$/i, "").trim() || chatFriendName(doc) || "Friend";
+      var avatar = "";
+      var imgs = native.querySelectorAll("img");
+      for (var ii = 0; ii < imgs.length; ii++) { if (imgs[ii].src && imgs[ii].src.indexOf("data:") !== 0) { avatar = imgs[ii].src.replace("_medium", "_full"); break; } }
       native.classList.add("ds-native-hidden");         // hide Steam's menu (kept clickable for proxy)
       var ring = main.querySelector(".ds-ring");
       if (existing && existing !== ring) existing.remove();
@@ -787,7 +786,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 32;
+  var VERSION = 33;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
