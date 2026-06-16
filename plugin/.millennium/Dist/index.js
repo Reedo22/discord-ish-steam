@@ -310,7 +310,13 @@
       var row = el(doc, "label", "ds-vs-row");
       var sp = el(doc, "span", "ds-vs-label"); sp.textContent = label;
       var cb = doc.createElement("input"); cb.type = "checkbox"; cb.className = "ds-vs-toggle";
-      cb.addEventListener("change", function () { var s = vcStore(); if (s) s[setter](cb.checked); });
+      cb.addEventListener("change", function () {
+        var s = vcStore(); if (!s) return;
+        s[setter](cb.checked);
+        // apply to the LIVE mic — NC/echo/AGC only take effect after the voice chat
+        // re-inits its audio pipeline (otherwise the toggle "does nothing").
+        try { if (s.RestartVoiceChatIfConnected) s.RestartVoiceChatIfConnected(); } catch (e) {}
+      });
       refreshers.push(function () { var s = vcStore(); if (s) cb.checked = !!s[getter](); });
       row.appendChild(sp); row.appendChild(cb); pop.appendChild(row);
     }
@@ -705,12 +711,20 @@
         if (self && partner) return;             // connected -> callStage handles it
         pick = { acct: k, chatid: v.voice_chatid, incoming: partner && !self };
       });
-      if (!pick) { if (ring) ring.remove(); return; }
-      var f = friendByAcct(pick.acct), p = f && f.m_persona;
+      var f = pick ? friendByAcct(pick.acct) : null, p = f && f.m_persona;
       var name = (f && f.m_strNickname) || (p && p.m_strPlayerName) || "Friend";
+      // Scope: render ONLY in the visible chat with this exact friend, occupying the
+      // same area as the call stage (top of the chat). Anywhere else -> no ring.
+      var win = [].slice.call(doc.querySelectorAll(".chatWindow")).filter(function (w) { return w.getBoundingClientRect().width > 0; })[0];
+      var main = win && win.querySelector(".ChatHistoryContainer");
+      var onThisChat = pick && main && (chatFriendName(doc) || "").toLowerCase() === name.toLowerCase();
+      // clean up any ring that shouldn't be here
+      doc.querySelectorAll(".ds-ring").forEach(function (r) { if (!onThisChat || r.parentElement !== main) r.remove(); });
+      if (!onThisChat) return;
       var avatar = p && p.m_strAvatarHash ? ("https://avatars.steamstatic.com/" + p.m_strAvatarHash + "_full.jpg") : "";
+      ring = main.querySelector(".ds-ring");
       if (!ring) {
-        ring = el(doc, "div", "ds-ring"); ring.id = "ds-ring";
+        ring = el(doc, "div", "ds-ring");
         var av = el(doc, "div", "ds-ring-av");
         var nm = el(doc, "div", "ds-ring-name");
         var st = el(doc, "div", "ds-ring-sub");
@@ -723,12 +737,9 @@
           try { vc.DeleteOneOnOneCallWaitingJoinOrAccept(ring.__acct); } catch (e) { console.warn("[ds] decline", e); }
           ring.remove();
         });
-        ring.addEventListener("click", function (e) {   // backdrop click = dismiss (failsafe, won't get stuck)
-          if (e.target === ring) { window.__ds_ring_dismissed[String(ring.__chatid)] = true; ring.remove(); }
-        });
         btns.appendChild(accept); btns.appendChild(decline);
         ring.appendChild(av); ring.appendChild(nm); ring.appendChild(st); ring.appendChild(btns);
-        doc.body.appendChild(ring);
+        main.appendChild(ring);
       }
       ring.__acct = pick.acct; ring.__chatid = pick.chatid;
       ring.querySelector(".ds-ring-av").style.backgroundImage = avatar ? ("url(" + avatar + ")") : "";
@@ -772,7 +783,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 28;
+  var VERSION = 29;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;

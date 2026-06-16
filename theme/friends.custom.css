@@ -386,10 +386,11 @@ html.discordish-incall .chatHeader .ChatMessageEntryVoice { display: none !impor
 .ds-share-tile .ds-name { background: var(--ds-accent, #5865f2) !important; }
 /* ===== Discord-style incoming/outgoing 1:1 call screen ===== */
 .ds-ring {
-  position: fixed !important; inset: 0 !important; z-index: 9000 !important;
+  position: absolute !important; top: 0 !important; left: 0 !important; right: 0 !important;
+  height: 50% !important; bottom: auto !important; z-index: 6 !important;
   display: flex !important; flex-direction: column !important;
   align-items: center !important; justify-content: center !important; gap: 14px !important;
-  background: rgba(15, 16, 18, .82) !important; backdrop-filter: blur(4px) !important;
+  background: #232428 !important; border-bottom: 1px solid var(--dc-darkest) !important;
   animation: dsStageIn .18s var(--dc-ease, ease) !important;
 }
 .ds-ring-av {
