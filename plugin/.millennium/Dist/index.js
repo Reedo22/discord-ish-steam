@@ -814,7 +814,15 @@
         if (row.__ds_dblbusy) return;                  // de-dupe: don't double-fire on a real dblclick
         row.__ds_dblbusy = true;
         win.setTimeout(function () { row.__ds_dblbusy = false; }, 300);
-        row.dispatchEvent(new win.MouseEvent("dblclick", { bubbles: true, cancelable: true, view: win }));
+        // Emulate the SECOND click of a real double-click: a click with detail:2 then a
+        // dblclick (also detail:2). Steam's open handler keys on the double — a plain
+        // dblclick with detail:0 (the previous attempt) didn't register. The detail:2
+        // click re-enters this listener but __ds_dblbusy short-circuits it (no recursion).
+        function fire(type) {
+          row.dispatchEvent(new win.MouseEvent(type, { bubbles: true, cancelable: true, view: win, detail: 2 }));
+        }
+        fire("click");
+        fire("dblclick");
       } catch (err) {}
     }, false);
   }
@@ -857,7 +865,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 40;
+  var VERSION = 41;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {

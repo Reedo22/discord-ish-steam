@@ -274,8 +274,8 @@
 .chatHeader:not(:empty) .ds-share-wrap { flex: 0 0 auto !important; }
 /* screen-share button in the chat header — circular, matches the VoiceToggle */
 .ds-share {
-  width: 36px !important; height: 36px !important;
-  min-width: 36px !important; min-height: 36px !important;
+  width: 40px !important; height: 40px !important;
+  min-width: 40px !important; min-height: 40px !important;
   border-radius: 50% !important;
   border: none !important; background: var(--dc-raise) !important; color: #fff !important;
   font-size: 15px !important; line-height: 1 !important; cursor: pointer !important;
@@ -303,15 +303,16 @@
 .ds-stream-stop:hover { background: #f23f43 !important; color: #fff !important; }
 
 /* voice (start/end call) toggle: force a real circle — Steam pads it to an oval, so
-   pin every dimension + kill padding + stop flex from stretching it */
+   pin every dimension + kill padding + stop flex from stretching it. 40px to match the
+   composer's emoji / attach buttons (which are 40px). */
 .VoiceToggle,
 .ChatMessageEntryVoice button,
 .chatHeader .ChatMessageEntryVoice button {
   border-radius: 50% !important;
-  width: 36px !important; height: 36px !important;
-  min-width: 36px !important; max-width: 36px !important;
-  min-height: 36px !important; max-height: 36px !important;
-  flex: 0 0 36px !important; padding: 0 !important; box-sizing: border-box !important;
+  width: 40px !important; height: 40px !important;
+  min-width: 40px !important; max-width: 40px !important;
+  min-height: 40px !important; max-height: 40px !important;
+  flex: 0 0 40px !important; padding: 0 !important; box-sizing: border-box !important;
   display: inline-flex !important; align-items: center !important; justify-content: center !important;
   color: var(--dc-text) !important;
   background: var(--dc-raise) !important;

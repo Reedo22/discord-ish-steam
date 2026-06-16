@@ -140,7 +140,9 @@ def pick_encoder():
     """Return (name, in_args, enc_args) auto-detecting the best available H.264 encoder.
     Viewers only decode H.264, so we always emit H.264."""
     enc = _ffmpeg_encoders()
-    common = ["-g", "60", "-bf", "0"]
+    # 1s keyframe interval (was 2s): WebRTC/WHEP can't show a new viewer anything until
+    # the next keyframe, so a shorter GOP = faster share startup. -bf 0 = no B-frames (low latency).
+    common = ["-g", str(int(FPS)), "-bf", "0"]
     # NVIDIA
     if shutil.which("nvidia-smi") and "h264_nvenc" in enc:
         return ("h264_nvenc", ["-vf", "format=nv12"],
