@@ -36,6 +36,9 @@ WHEP_PORT = 8889
 DISPLAY = os.environ.get("DISPLAY", ":1")   # Linux/X11 only; ignored on Windows
 BITRATE = os.environ.get("DS_BITRATE", "12M")
 FPS = os.environ.get("DS_FPS", "30")
+# Tunnel mode: "auto" = pre-warm a cloudflared tunnel at boot + keep it warm (fast first
+# share, works off-LAN). "off" = never tunnel (LAN-only; fastest, no public endpoint).
+TUNNEL = os.environ.get("DS_TUNNEL", "auto").lower()
 
 state = {"ff": None, "mtx": None, "geom": None, "cf": None, "cf_url": None}
 lock = threading.Lock()
@@ -301,7 +304,12 @@ def ensure_mediamtx():
         env["MTX_WEBRTCADDITIONALHOSTS"] = pip
     state["mtx"] = _spawn([MEDIAMTX, MTX_CFG], stdout=subprocess.DEVNULL,
                           stderr=subprocess.DEVNULL, env=env)
-    time.sleep(1.5)
+    # poll the RTSP port instead of a fixed 1.5s sleep — return the moment it's listening
+    for _ in range(40):                       # up to ~4s
+        try:
+            s = socket.create_connection(("127.0.0.1", 8554), 0.1); s.close(); break
+        except Exception:
+            time.sleep(0.1)
 
 
 def stop_tunnel():
@@ -312,7 +320,10 @@ def stop_tunnel():
 def ensure_tunnel():
     # Start a Cloudflare quick tunnel exposing ONLY MediaMTX's WebRTC port, so off-LAN
     # viewers get a valid-HTTPS WHEP url (no mixed-content, no proxy). Tunnel carries the
-    # tiny signaling only; media is P2P (STUN). Torn down on /stop. Random one-time URL.
+    # tiny signaling only; media is P2P (STUN). KEPT WARM across shares (pre-warmed at boot
+    # + reused) so a share never pays the ~2-4s handshake; torn down only on daemon stop.
+    if TUNNEL == "off":
+        return None
     if state.get("cf") and state["cf"].poll() is None and state.get("cf_url"):
         return state["cf_url"]
     if not os.path.exists(CLOUDFLARED):
@@ -440,7 +451,8 @@ class H(BaseHTTPRequestHandler):
             self._send({"ok": ok, "whep": out_whep, "lan_whep": lan_whep, "tunnel": bool(tun),
                         "path": "screen", "geom": geom, "encoder": pick_encoder()[0]})
         elif u.path == "/stop":
-            with lock: stop_capture(); stop_tunnel()
+            # stop the capture but KEEP the tunnel warm for the next share (instant restart)
+            with lock: stop_capture()
             self._send({"ok": True})
         elif u.path == "/url":
             tun = state.get("cf_url")
@@ -495,7 +507,18 @@ def main():
         with lock: stop_capture(); stop_tunnel()
         os._exit(0)
     signal.signal(signal.SIGTERM, shutdown); signal.signal(signal.SIGINT, shutdown)
-    print("rp-webrtc daemon on 127.0.0.1:%d (encoder=%s, lan=%s)" % (PORT, pick_encoder()[0], lan_ip()))
+    print("rp-webrtc daemon on 127.0.0.1:%d (encoder=%s, lan=%s, tunnel=%s)"
+          % (PORT, pick_encoder()[0], lan_ip(), TUNNEL))
+    # Pre-warm the slow bits in the background so the FIRST share is fast: MediaMTX (so it's
+    # already listening) and the cloudflared tunnel (so its https URL is ready). Both are
+    # otherwise built lazily on the first /start, which is what made sharing slow to begin.
+    def prewarm():
+        try: ensure_mediamtx()
+        except Exception: pass
+        if TUNNEL != "off":
+            try: ensure_tunnel()
+            except Exception: pass
+    threading.Thread(target=prewarm, daemon=True).start()
     srv.serve_forever()
 
 
