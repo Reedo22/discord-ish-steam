@@ -237,6 +237,51 @@
   }
   // exposed so the test harness (and later, chat-signaling) can start a viewer:
   window.__dsConnectShare = function (url) { window.__ds_view_url = url; };
+  // Viewer (universal fallback): play fragmented-MP4 streamed over a WebSocket via MSE.
+  // Works for any remote viewer through the cloudflared tunnel (no WebRTC/UDP needed).
+  function wConnectWsMse(wsUrl, v) {
+    try {
+      if (!window.MediaSource) { console.warn("[ds] MSE unavailable"); return; }
+      if (v.__ws) { try { v.__ws.close(); } catch (e) {} v.__ws = null; }
+      var ms = new MediaSource();
+      v.src = URL.createObjectURL(ms);
+      var sb = null, queue = [];
+      function pump() {
+        if (!sb || sb.updating || !queue.length) return;
+        var chunk = queue[0];
+        try { sb.appendBuffer(chunk); queue.shift(); }
+        catch (e) {
+          if (e && e.name === "QuotaExceededError" && v.buffered.length) {
+            try { sb.remove(0, Math.max(0, v.currentTime - 2)); } catch (e2) {}
+            // updateend (from remove) re-fires pump; leave the chunk queued to retry
+          } else { queue.shift(); }
+        }
+      }
+      ms.addEventListener("sourceopen", function () {
+        try {
+          sb = ms.addSourceBuffer('video/mp4; codecs="avc1.640034"');   // High@5.2, covers up to 4K
+          sb.mode = "sequence";
+          sb.addEventListener("updateend", pump);
+        } catch (e) { console.warn("[ds] addSourceBuffer", e); return; }
+        var ws = new WebSocket(wsUrl);
+        ws.binaryType = "arraybuffer";
+        v.__ws = ws;
+        ws.onmessage = function (ev) {
+          queue.push(new Uint8Array(ev.data));
+          if (queue.length > 240) queue.splice(0, queue.length - 240);   // bound memory
+          pump();
+          try {                                       // ride the live edge (keep latency low)
+            if (v.buffered.length) {
+              var end = v.buffered.end(v.buffered.length - 1);
+              if (end - v.currentTime > 1.2) v.currentTime = end - 0.2;
+            }
+          } catch (e) {}
+          if (v.paused && v.play) v.play().catch(function () {});
+        };
+        ws.onerror = function (e) { console.warn("[ds] ws err", e); };
+      });
+    } catch (e) { console.warn("[ds] wConnectWsMse", e); }
+  }
   // Live control of the running capture server (switch source / resolution without
   // dropping the RPT session). Reachable because Chromium lets https pages fetch
   // http://127.0.0.1 (localhost is "potentially trustworthy").
