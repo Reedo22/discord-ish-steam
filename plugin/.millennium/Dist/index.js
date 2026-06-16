@@ -210,7 +210,11 @@
       var pc = new RTCPeerConnection({ iceServers: iceServers });
       v.__pc = pc;
       pc.addTransceiver("video", { direction: "recvonly" });
-      pc.ontrack = function (e) { v.srcObject = e.streams[0]; if (v.play) v.play().catch(function () {}); };
+      pc.ontrack = function (e) {
+        v.srcObject = e.streams[0];
+        if (v.__dsAutoTimer) { clearTimeout(v.__dsAutoTimer); v.__dsAutoTimer = null; }
+        if (v.play) v.play().catch(function () {});
+      };
       // re-attempt while the source isn't producing yet; bail if a newer connect superseded us
       var retry = function (why) {
         try { pc.close(); } catch (e) {}
@@ -238,14 +242,18 @@
   }
   // exposed so the test harness (and later, chat-signaling) can start a viewer:
   window.__dsConnectShare = function (url) { window.__ds_view_url = url; };
-  // Try WebRTC; if no live video arrives within ~5s and we have a ws fallback url, switch.
+  // Try WebRTC; if no decodable video arrives within ~5s and we have a ws fallback url, switch.
   function wConnectAuto(url, v) {
     if (v.__dsAutoTimer) { clearTimeout(v.__dsAutoTimer); v.__dsAutoTimer = null; }
+    if (v.__ws) { try { v.__ws.close(); } catch (e) {} v.__ws = null; }   // drop a stale WS before reconnecting
     wConnectShare(url, v);
     var ws = window.__ds_view_ws;
     if (ws) {
       v.__dsAutoTimer = setTimeout(function () {
-        if (!(v.srcObject && v.srcObject.active) && (!v.videoWidth)) {
+        v.__dsAutoTimer = null;
+        // videoWidth stays 0 until a real frame decodes — this catches the "negotiated
+        // but black" case (srcObject.active is true even when no frame ever arrives).
+        if (!v.videoWidth) {
           try { if (v.__pc) { v.__pc.close(); v.__pc = null; } } catch (e) {}
           wConnectWsMse(ws, v);
         }
@@ -703,6 +711,13 @@
         wConnectAuto(window.__ds_view_url, shareTile.querySelector("video"));
       }
     } else if (shareTile) {
+      var ov = shareTile.querySelector("video");
+      if (ov) {
+        if (ov.__dsAutoTimer) { clearTimeout(ov.__dsAutoTimer); ov.__dsAutoTimer = null; }
+        if (ov.__ws) { try { ov.__ws.close(); } catch (e) {} ov.__ws = null; }
+        if (ov.__pc) { try { ov.__pc.close(); } catch (e) {} ov.__pc = null; }
+        try { ov.src = ""; ov.srcObject = null; ov.load(); } catch (e) {}
+      }
       shareTile.remove();
       __ds_w.expanded = false;
       stage.classList.remove("ds-share-expanded");
@@ -772,7 +787,10 @@
       var end = (wsI > iceI) ? wsI : payload.length;
       try { out.ice = JSON.parse(atob(payload.slice(iceI + 5, end))); } catch (e) {}
     }
-    if (wsI >= 0) { try { out.ws = decodeURIComponent(payload.slice(wsI + 4)); } catch (e) {} }
+    if (wsI >= 0) {
+      var wsEnd = (iceI > wsI) ? iceI : payload.length;
+      try { out.ws = decodeURIComponent(payload.slice(wsI + 4, wsEnd)); } catch (e) {}
+    }
     return out;
   }
   function friendAcctForDoc(doc) {
