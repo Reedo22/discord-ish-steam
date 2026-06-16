@@ -185,6 +185,7 @@
       .then(function (j) {
         window.__ds_share_url = j && j.whep;                 // LAN/public url for the viewer
         window.__ds_share_ice = (j && j.ice) || null;        // TURN/STUN servers for the viewer
+        window.__ds_share_ws = (j && j.ws) || null;
         window.__ds_share_local = "http://127.0.0.1:8889/screen/whep";   // loopback for self-preview
         window.__ds_share_info = j; return j;
       })
@@ -237,6 +238,20 @@
   }
   // exposed so the test harness (and later, chat-signaling) can start a viewer:
   window.__dsConnectShare = function (url) { window.__ds_view_url = url; };
+  // Try WebRTC; if no live video arrives within ~5s and we have a ws fallback url, switch.
+  function wConnectAuto(url, v) {
+    if (v.__dsAutoTimer) { clearTimeout(v.__dsAutoTimer); v.__dsAutoTimer = null; }
+    wConnectShare(url, v);
+    var ws = window.__ds_view_ws;
+    if (ws) {
+      v.__dsAutoTimer = setTimeout(function () {
+        if (!(v.srcObject && v.srcObject.active) && (!v.videoWidth)) {
+          try { if (v.__pc) { v.__pc.close(); v.__pc = null; } } catch (e) {}
+          wConnectWsMse(ws, v);
+        }
+      }, 5000);
+    }
+  }
   // Viewer (universal fallback): play fragmented-MP4 streamed over a WebSocket via MSE.
   // Works for any remote viewer through the cloudflared tunnel (no WebRTC/UDP needed).
   function wConnectWsMse(wsUrl, v) {
@@ -538,7 +553,7 @@
         wStopShare(); setTimeout(srefresh, 60);
       } else {
         wStartShare(window.__ds_share_geom).then(function () {
-          if (window.__ds_share_url) { try { sendSignal(doc, sigPayload(window.__ds_share_url, window.__ds_share_ice)); } catch (e) {} }  // auto-signal the viewer (url + ICE)
+          if (window.__ds_share_url) { try { sendSignal(doc, sigPayload(window.__ds_share_url, window.__ds_share_ice, window.__ds_share_ws)); } catch (e) {} }  // auto-signal the viewer (url + ICE)
           srefresh();
         });
       }
@@ -682,10 +697,10 @@
         });
         tiles.appendChild(shareTile);
         shareTile.dataset.url = window.__ds_view_url;
-        wConnectShare(window.__ds_view_url, vid);
+        wConnectAuto(window.__ds_view_url, vid);
       } else if (shareTile.dataset.url !== window.__ds_view_url) {
         shareTile.dataset.url = window.__ds_view_url;
-        wConnectShare(window.__ds_view_url, shareTile.querySelector("video"));
+        wConnectAuto(window.__ds_view_url, shareTile.querySelector("video"));
       }
     } else if (shareTile) {
       shareTile.remove();
@@ -741,16 +756,24 @@
   window.__ds_sig_seen = window.__ds_sig_seen || {};   // per-friend last-processed ordinal
   // Payload = "<whep-url>" optionally followed by "|ice=<base64(JSON iceServers)>" so the
   // viewer gets the host's Cloudflare TURN credentials (needed to relay across NATs).
-  function sigPayload(url, ice) {
-    if (!ice || !ice.length) return url;
-    try { return url + "|ice=" + btoa(JSON.stringify(ice)); } catch (e) { return url; }
+  function sigPayload(url, ice, ws) {
+    var p = url;
+    if (ice && ice.length) { try { p += "|ice=" + btoa(JSON.stringify(ice)); } catch (e) {} }
+    if (ws) p += "|ws=" + encodeURIComponent(ws);
+    return p;
   }
   function parseSignal(payload) {
-    var i = payload.indexOf("|ice=");
-    if (i < 0) return { url: payload, ice: null };
-    var ice = null;
-    try { ice = JSON.parse(atob(payload.slice(i + 5))); } catch (e) {}
-    return { url: payload.slice(0, i), ice: ice };
+    var out = { url: payload, ice: null, ws: null };
+    var iceI = payload.indexOf("|ice=");
+    var wsI = payload.indexOf("|ws=");
+    var cut = Math.min(iceI < 0 ? payload.length : iceI, wsI < 0 ? payload.length : wsI);
+    out.url = payload.slice(0, cut);
+    if (iceI >= 0) {
+      var end = (wsI > iceI) ? wsI : payload.length;
+      try { out.ice = JSON.parse(atob(payload.slice(iceI + 5, end))); } catch (e) {}
+    }
+    if (wsI >= 0) { try { out.ws = decodeURIComponent(payload.slice(wsI + 4)); } catch (e) {} }
+    return out;
   }
   function friendAcctForDoc(doc) {
     try {
@@ -784,8 +807,8 @@
           if ((window.__ds_sig_seen[f.m_unAccountID] || 0) >= ord) break;   // already handled
           window.__ds_sig_seen[f.m_unAccountID] = ord;
           var payload = m.strMessageInternal.slice(SIG.length);
-          if (payload === "stop") { window.__ds_view_url = null; window.__ds_view_ice = null; }
-          else { var p = parseSignal(payload); window.__ds_view_url = p.url; window.__ds_view_ice = p.ice; }
+          if (payload === "stop") { window.__ds_view_url = null; window.__ds_view_ice = null; window.__ds_view_ws = null; }
+          else { var p = parseSignal(payload); window.__ds_view_url = p.url; window.__ds_view_ice = p.ice; window.__ds_view_ws = p.ws; }
           break;
         }
       });
@@ -984,7 +1007,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 45;
+  var VERSION = 46;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
