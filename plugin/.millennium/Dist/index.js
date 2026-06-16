@@ -693,66 +693,61 @@
   }
 
   // === Discord-style incoming/outgoing 1:1 call screen ======================
-  function friendByAcct(acct) {
-    try { return (window.g_FriendsUIApp.m_FriendStore.all_friends || []).find(function (f) { return f.m_unAccountID === acct; }); }
-    catch (e) { return null; }
-  }
-  window.__ds_ring_dismissed = window.__ds_ring_dismissed || {};
+  // Driven by Steam's NATIVE ringing UI (.OneOnOneVoiceRoomControls in a .WaitingFor*
+  // state). We hide that menu and mirror it as a Discord card in the call-stage area,
+  // proxy-clicking its REAL buttons — .inviteButtonJoinVoice (accept) /
+  // .inviteButtonDeclineVoice (decline) — because they actually work, unlike the store
+  // method (JoinVoiceChatOrAsk... CALLS THE PERSON BACK instead of accepting).
   function ringUI(doc) {
     try {
-      var vc = window.g_FriendsUIApp.m_VoiceChatStore;
-      var m = vc && vc.m_mapOneOnOneCallsWaitingJoinOrAccept;
-      var ring = doc.getElementById("ds-ring");
-      var pick = null;
-      if (m && m.forEach) m.forEach(function (v, k) {
-        if (pick || window.__ds_ring_dismissed[String(v.voice_chatid)]) return;   // skip dismissed
-        var self = vc.BSelfHasAcceptedOrInitiatedOneOnOneChat(v.voice_chatid);
-        var partner = vc.BPartnerHasAcceptedOrInitiatedOneOnOneChat(v.voice_chatid);
-        if (self && partner) return;             // connected -> callStage handles it
-        pick = { acct: k, chatid: v.voice_chatid, incoming: partner && !self };
-      });
-      var f = pick ? friendByAcct(pick.acct) : null, p = f && f.m_persona;
-      var name = (f && f.m_strNickname) || (p && p.m_strPlayerName) || "Friend";
-      // Scope: render ONLY in the visible chat with this exact friend, occupying the
-      // same area as the call stage (top of the chat). Anywhere else -> no ring.
       var win = [].slice.call(doc.querySelectorAll(".chatWindow")).filter(function (w) { return w.getBoundingClientRect().width > 0; })[0];
-      var main = win && win.querySelector(".ChatHistoryContainer");
-      var onThisChat = pick && main && (chatFriendName(doc) || "").toLowerCase() === name.toLowerCase();
-      // clean up any ring that shouldn't be here
-      doc.querySelectorAll(".ds-ring").forEach(function (r) { if (!onThisChat || r.parentElement !== main) r.remove(); });
-      if (!onThisChat) return;
+      var native = win && win.querySelector(".OneOnOneVoiceRoomControls");
+      var ringing = native && /Waiting/.test(native.className || "");
+      var existing = doc.querySelector(".ds-ring");
+      if (!ringing) {                                   // not ringing -> tear down + un-hide native
+        if (existing) existing.remove();
+        if (native) native.classList.remove("ds-native-hidden");
+        return;
+      }
+      var main = win.querySelector(".ChatHistoryContainer");
+      if (!main) { if (existing) existing.remove(); return; }
+      var incoming = !!native.querySelector(".inviteButtonJoinVoice");   // accept button = they're calling you
+      var name = chatFriendName(doc) || "Friend";
+      var f = (window.g_FriendsUIApp.m_FriendStore.all_friends || []).find(function (x) {
+        var pp = x.m_persona || {};
+        return [x.m_strNickname, pp.m_strPlayerName].some(function (n) { return n && ("" + n).toLowerCase() === name.toLowerCase(); });
+      });
+      var p = f && f.m_persona;
       var avatar = p && p.m_strAvatarHash ? ("https://avatars.steamstatic.com/" + p.m_strAvatarHash + "_full.jpg") : "";
-      ring = main.querySelector(".ds-ring");
+      native.classList.add("ds-native-hidden");         // hide Steam's menu (kept clickable for proxy)
+      var ring = main.querySelector(".ds-ring");
+      if (existing && existing !== ring) existing.remove();
       if (!ring) {
         ring = el(doc, "div", "ds-ring");
         var av = el(doc, "div", "ds-ring-av");
         var nm = el(doc, "div", "ds-ring-name");
         var st = el(doc, "div", "ds-ring-sub");
         var btns = el(doc, "div", "ds-ring-btns");
-        var accept = el(doc, "button", "ds-ring-accept"); accept.textContent = "✓ Accept";
-        var decline = el(doc, "button", "ds-ring-decline"); decline.textContent = "✕ Decline";
-        accept.addEventListener("click", function () {
-          ring.__accepting = true;                                  // instant feedback
-          ring.querySelector(".ds-ring-sub").textContent = "Connecting…";
-          ring.querySelector(".ds-ring-btns").style.display = "none";
-          try { vc.JoinVoiceChatOrAskForOneOnOneChatNow(); } catch (e) { console.warn("[ds] accept", e); }
+        var acc = el(doc, "button", "ds-ring-accept"); acc.textContent = "✓ Accept";
+        var dec = el(doc, "button", "ds-ring-decline"); dec.textContent = "✕ Decline";
+        acc.addEventListener("click", function () {
+          ring.__accepting = true; st.textContent = "Connecting…"; btns.style.display = "none";
+          var b = native.querySelector(".inviteButtonJoinVoice"); if (b) b.click();   // proxy Steam's accept
         });
-        decline.addEventListener("click", function () {
-          window.__ds_ring_dismissed[String(ring.__chatid)] = true;   // never re-show this call
-          try { vc.DeleteOneOnOneCallWaitingJoinOrAccept(ring.__acct); } catch (e) { console.warn("[ds] decline", e); }
+        dec.addEventListener("click", function () {
+          var b = native.querySelector(".inviteButtonDeclineVoice"); if (b) b.click();   // proxy Steam's decline
           ring.remove();
         });
-        btns.appendChild(accept); btns.appendChild(decline);
+        btns.appendChild(acc); btns.appendChild(dec);
         ring.appendChild(av); ring.appendChild(nm); ring.appendChild(st); ring.appendChild(btns);
         main.appendChild(ring);
       }
-      ring.__acct = pick.acct; ring.__chatid = pick.chatid;
       ring.querySelector(".ds-ring-av").style.backgroundImage = avatar ? ("url(" + avatar + ")") : "";
       ring.querySelector(".ds-ring-name").textContent = name;
       if (!ring.__accepting) {   // don't clobber the "Connecting…" feedback
-        ring.querySelector(".ds-ring-sub").textContent = pick.incoming ? "Incoming call" : "Calling…";
-        ring.querySelector(".ds-ring-accept").style.display = pick.incoming ? "" : "none";
-        ring.querySelector(".ds-ring-decline").textContent = pick.incoming ? "✕ Decline" : "✕ Cancel";
+        ring.querySelector(".ds-ring-sub").textContent = incoming ? "Incoming call" : "Calling…";
+        ring.querySelector(".ds-ring-accept").style.display = incoming ? "" : "none";
+        ring.querySelector(".ds-ring-decline").textContent = incoming ? "✕ Decline" : "✕ Cancel";
       }
     } catch (e) {}
   }
@@ -790,7 +785,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 30;
+  var VERSION = 31;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
