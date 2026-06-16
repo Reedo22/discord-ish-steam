@@ -87,6 +87,56 @@ def ws_broadcast(data):
                 pass
 
 
+def _read_exact(stream, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = stream.read(n - len(buf))
+        if not chunk:
+            return None
+        buf += chunk
+    return buf
+
+
+def fmp4_pump(stream):
+    """Read a fragmented-MP4 byte stream box-by-box. ftyp+moov form the MSE init segment
+    (stored for new clients); each moof+mdat pair is one media fragment broadcast as a
+    single WebSocket message so MSE sees clean fragment boundaries."""
+    init = b""
+    have_init = False
+    pending_moof = None
+    while True:
+        header = _read_exact(stream, 8)
+        if not header:
+            break
+        size = struct.unpack(">I", header[:4])[0]
+        btype = header[4:8]
+        if size == 1:                      # 64-bit extended size
+            ext = _read_exact(stream, 8)
+            if ext is None:
+                break
+            size = struct.unpack(">Q", ext)[0]
+            body = _read_exact(stream, size - 16)
+            box = header + ext + (body or b"")
+        else:
+            body = _read_exact(stream, size - 8)
+            box = header + (body or b"")
+        if body is None:
+            break
+        if btype in (b"ftyp", b"moov"):
+            init += box
+            if btype == b"moov":
+                with ws_lock:
+                    fmp4_init["seg"] = init
+                have_init = True
+        elif btype == b"moof":
+            pending_moof = box
+        elif btype == b"mdat":
+            if have_init and pending_moof is not None:
+                ws_broadcast(pending_moof + box)
+                pending_moof = None
+        # any other box (styp, sidx, free, ...) is ignored
+
+
 # --- Cloudflare TURN (NAT traversal for off-LAN viewers) -----------------------------
 # Direct P2P with STUN alone fails on symmetric/CGNAT, so media never reaches a remote
 # viewer (a connected-but-black tile). A TURN relay fixes it: when no direct path works,
