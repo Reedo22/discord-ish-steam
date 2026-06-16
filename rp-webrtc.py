@@ -66,7 +66,23 @@ def _turn_secret():
 
 
 _turn = {"ice": None, "exp": 0}   # cached ICE servers + epoch expiry
-_STUN_ONLY = [{"urls": "stun:stun.l.google.com:19302"}]
+
+# ICE servers when NO personal Cloudflare key is configured. STUN alone lets DIRECT P2P
+# work whenever at least one peer has a friendly NAT; it does NOT relay, so a hard
+# (symmetric/CGNAT) NAT on both ends still fails off-LAN. Reliable *anonymous* free TURN
+# no longer exists (relaying costs bandwidth, so providers gate it behind a key), so we
+# don't ship a relay by default. To plug one in, set DS_PUBLIC_TURN to a JSON array of
+# RTCIceServer objects, e.g.:
+#   DS_PUBLIC_TURN='[{"urls":["turn:my.relay:3478"],"username":"u","credential":"p"}]'
+# For a robust no-config off-LAN path without any key, use the LL-HLS-over-tunnel mode.
+def _public_ice():
+    raw = os.environ.get("DS_PUBLIC_TURN")
+    if raw:
+        try:
+            return json.loads(raw)
+        except Exception:
+            sys.stderr.write("[turn] bad DS_PUBLIC_TURN JSON; using STUN-only\n")
+    return [{"urls": "stun:stun.l.google.com:19302"}]
 
 
 def turn_ice(ttl=86400):
@@ -78,8 +94,9 @@ def turn_ice(ttl=86400):
         return _turn["ice"]
     kid, tok = _turn_secret()
     if not kid or not tok:
-        _turn["ice"] = _STUN_ONLY; _turn["exp"] = now + ttl
-        return _STUN_ONLY
+        pub = _public_ice()
+        _turn["ice"] = pub; _turn["exp"] = now + ttl   # no personal key -> free public relay
+        return pub
     try:
         url = "https://rtc.live.cloudflare.com/v1/turn/keys/%s/credentials/generate" % kid
         req = urllib.request.Request(
@@ -93,9 +110,10 @@ def turn_ice(ttl=86400):
         sys.stderr.write("[turn] minted Cloudflare ICE credentials (ttl %ds)\n" % ttl)
         return servers
     except Exception as e:
-        sys.stderr.write("[turn] mint failed (%s); falling back to STUN-only\n" % e)
-        _turn["ice"] = _STUN_ONLY; _turn["exp"] = now + 300   # retry sooner
-        return _STUN_ONLY
+        sys.stderr.write("[turn] mint failed (%s); falling back to public relay\n" % e)
+        pub = _public_ice()
+        _turn["ice"] = pub; _turn["exp"] = now + 300   # retry the key sooner
+        return pub
 
 
 def _mtx_config_path():
