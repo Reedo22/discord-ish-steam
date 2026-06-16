@@ -3,6 +3,6 @@
   "name": "discordish-chat",
   "common_name": "Discord-ish Chat Helper",
   "description": "Discord-style friends/chat: docked layout, voice-to-header, center-stage call UI + voice settings, screen share. Auto-updates from the repo (no backend).",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "useBackend": false
 }
