@@ -814,10 +814,10 @@
   // Backend-free self-update: newer Millennium dropped Python backends (it uses Lua
   // now), so this plugin ships useBackend:false and updates itself from the repo.
   // CSS is refreshed by fetchCSS(); here we also fetch the latest index.js and, if its
-  // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
-  // `export default` first — eval rejects module syntax). init() runs only after this
-  // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 36;
+  // VERSION is newer than ours, run that instead of this bundled copy (strip the
+  // trailing ES module statement first — eval rejects module syntax). init() runs only
+  // after this resolves, so we never double-initialise; falls back to bundled if offline.
+  var VERSION = 37;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
