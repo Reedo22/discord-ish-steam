@@ -82,8 +82,17 @@ own encode on demand — decided in the plan.)
   When the next share would exceed a configurable soft cap (default ~900 GB, 0 =
   unlimited), the TURN path is skipped and the share uses WS+MSE instead. Estimate is
   intentionally conservative (assumes relay even if the path was direct) so it can only
-  *under*-use the relay, never cause an overage. Bitrate is configurable (default 6 Mbps;
-  options 3 / 6 / 12).
+  *under*-use the relay, never cause an overage.
+- **Quality presets (resolution + bitrate paired).** Capture is at the monitor's native
+  resolution; the encoder optionally downscales. Presets keep res and bitrate coherent so
+  quality stays good and bandwidth/latency stay predictable:
+  - 1080p ≈ 4 Mbps
+  - **1440p ≈ 6 Mbps — default**
+  - 4K ≈ 12 Mbps
+  Screen content (static desktop/UI/text) compresses well, so these look crisp; 4K only
+  softens under heavy full-motion content, which the higher bitrate offsets. Higher
+  presets cost more tunnel bandwidth and a touch more WS+MSE latency — the panel notes
+  this. NVENC handles 4K/30 and Chromium (WebRTC and MSE) decodes it on the viewer.
 
 ### Plugin (`plugin/.millennium/Dist/index.js`)
 
