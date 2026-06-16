@@ -18,7 +18,7 @@
 #
 # MediaMTX is started on demand from ./bin/mediamtx with ./bin/rp-mediamtx.yml.
 import os, sys, json, socket, subprocess, threading, signal, shutil, time, re, tempfile
-import urllib.request, urllib.error
+import urllib.request, urllib.error, base64, hashlib, struct
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -42,6 +42,49 @@ TUNNEL = os.environ.get("DS_TUNNEL", "auto").lower()
 
 state = {"ff": None, "mtx": None, "geom": None, "cf": None, "cf_url": None}
 lock = threading.Lock()
+
+# --- fragmented-MP4 over WebSocket (the universal, tunnel-friendly transport) ---------
+# A remote viewer behind a hard NAT can't get WebRTC media (UDP) through the cloudflared
+# tunnel, but it CAN pull fragmented MP4 over a WebSocket (TCP) and play it via MSE. We
+# hand-roll a minimal server->client binary WebSocket (RFC 6455) so the daemon stays
+# stdlib-only. ws_clients holds the live viewer sockets; fmp4_init holds the latest init
+# segment (ftyp+moov) so a newly-connected viewer can start immediately.
+_WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+ws_clients = set()
+ws_lock = threading.Lock()
+fmp4_init = {"seg": None}
+
+
+def _ws_accept(key):
+    return base64.b64encode(hashlib.sha1((key + _WS_GUID).encode()).digest()).decode()
+
+
+def _ws_frame(payload, opcode=0x2):          # 0x2 = binary, FIN set, unmasked (server->client)
+    n = len(payload)
+    if n < 126:
+        hdr = bytes([0x80 | opcode, n])
+    elif n < 65536:
+        hdr = bytes([0x80 | opcode, 126]) + struct.pack(">H", n)
+    else:
+        hdr = bytes([0x80 | opcode, 127]) + struct.pack(">Q", n)
+    return hdr + payload
+
+
+def ws_broadcast(data):
+    frame = _ws_frame(data)
+    with ws_lock:
+        dead = []
+        for c in ws_clients:
+            try:
+                c.sendall(frame)
+            except Exception:
+                dead.append(c)
+        for c in dead:
+            ws_clients.discard(c)
+            try:
+                c.close()
+            except Exception:
+                pass
 
 
 # --- Cloudflare TURN (NAT traversal for off-LAN viewers) -----------------------------
