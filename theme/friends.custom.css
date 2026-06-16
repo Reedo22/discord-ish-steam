@@ -289,9 +289,16 @@
   display: inline-flex !important; align-items: center !important; justify-content: center !important;
   color: var(--dc-text) !important;
   background: var(--dc-raise) !important;
+  position: relative !important;   /* anchor for the absolutely-centered icon below */
 }
-/* center the icon container/SVG inside the round button (Steam right-shifts it ~5px) */
+/* center the icon container inside the round button. flex centering doesn't take on
+   Steam's IconCtn (it sits flush-right + low), so pin it dead-center absolutely. */
 .VoiceToggle .VoiceToggleIconCtn, .ChatMessageEntryVoice button .VoiceToggleIconCtn,
+.chatHeader .ChatMessageEntryVoice button .VoiceToggleIconCtn {
+  position: absolute !important; top: 50% !important; left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  margin: 0 !important; flex: 0 0 auto !important;
+}
 .VoiceToggle svg, .ChatMessageEntryVoice button svg { margin: auto !important; flex: 0 0 auto !important; }
 .VoiceToggle:hover,
 .ChatMessageEntryVoice button:hover { background: var(--dc-hover) !important; }
