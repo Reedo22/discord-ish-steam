@@ -731,7 +731,12 @@
         var btns = el(doc, "div", "ds-ring-btns");
         var accept = el(doc, "button", "ds-ring-accept"); accept.textContent = "✓ Accept";
         var decline = el(doc, "button", "ds-ring-decline"); decline.textContent = "✕ Decline";
-        accept.addEventListener("click", function () { try { vc.JoinVoiceChatOrAskForOneOnOneChatNow(); } catch (e) { console.warn("[ds] accept", e); } });
+        accept.addEventListener("click", function () {
+          ring.__accepting = true;                                  // instant feedback
+          ring.querySelector(".ds-ring-sub").textContent = "Connecting…";
+          ring.querySelector(".ds-ring-btns").style.display = "none";
+          try { vc.JoinVoiceChatOrAskForOneOnOneChatNow(); } catch (e) { console.warn("[ds] accept", e); }
+        });
         decline.addEventListener("click", function () {
           window.__ds_ring_dismissed[String(ring.__chatid)] = true;   // never re-show this call
           try { vc.DeleteOneOnOneCallWaitingJoinOrAccept(ring.__acct); } catch (e) { console.warn("[ds] decline", e); }
@@ -744,9 +749,11 @@
       ring.__acct = pick.acct; ring.__chatid = pick.chatid;
       ring.querySelector(".ds-ring-av").style.backgroundImage = avatar ? ("url(" + avatar + ")") : "";
       ring.querySelector(".ds-ring-name").textContent = name;
-      ring.querySelector(".ds-ring-sub").textContent = pick.incoming ? "Incoming call" : "Calling…";
-      ring.querySelector(".ds-ring-accept").style.display = pick.incoming ? "" : "none";
-      ring.querySelector(".ds-ring-decline").textContent = pick.incoming ? "✕ Decline" : "✕ Cancel";
+      if (!ring.__accepting) {   // don't clobber the "Connecting…" feedback
+        ring.querySelector(".ds-ring-sub").textContent = pick.incoming ? "Incoming call" : "Calling…";
+        ring.querySelector(".ds-ring-accept").style.display = pick.incoming ? "" : "none";
+        ring.querySelector(".ds-ring-decline").textContent = pick.incoming ? "✕ Decline" : "✕ Cancel";
+      }
     } catch (e) {}
   }
 
@@ -783,7 +790,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 29;
+  var VERSION = 30;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;

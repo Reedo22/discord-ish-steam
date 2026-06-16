@@ -275,14 +275,21 @@
 }
 .ds-stream-stop:hover { background: #f23f43 !important; color: #fff !important; }
 
-/* voice toggle: circular wherever it sits */
-.VoiceToggle {
+/* voice (start/end call) toggle: force a real circle — Steam pads it to an oval, so
+   pin every dimension + kill padding + stop flex from stretching it */
+.VoiceToggle,
+.ChatMessageEntryVoice button,
+.chatHeader .ChatMessageEntryVoice button {
   border-radius: 50% !important;
   width: 36px !important; height: 36px !important;
+  min-width: 36px !important; max-width: 36px !important;
+  min-height: 36px !important; max-height: 36px !important;
+  flex: 0 0 36px !important; padding: 0 !important; box-sizing: border-box !important;
   color: var(--dc-text) !important;
   background: var(--dc-raise) !important;
 }
-.VoiceToggle:hover { background: var(--dc-hover) !important; }
+.VoiceToggle:hover,
+.ChatMessageEntryVoice button:hover { background: var(--dc-hover) !important; }
 
 /* ---------- Tab strip -> single chat header ---------- */
 /* Roster (left rail) is the navigation. Instead of a row of tabs, show only the
