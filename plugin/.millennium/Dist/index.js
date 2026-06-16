@@ -795,12 +795,37 @@
     } catch (e) {}
   }
 
+  // One-click to open/switch a chat. Steam opens a conversation on DOUBLE-click of a
+  // roster row; we want single-click (Discord-style). Rather than guess the chat-store
+  // API, we delegate one click listener per doc and synthesize the dblclick Steam itself
+  // handles — reusing its exact open logic. Idempotent per doc; ignores call-stage clones,
+  // the header tab (pointer-events:none anyway), and interactive children (context buttons).
+  function oneClickOpen(doc) {
+    if (doc.__ds_oneclick) return;
+    doc.__ds_oneclick = true;
+    var win = doc.defaultView || window;
+    doc.addEventListener("click", function (e) {
+      try {
+        var t = e.target;
+        if (!t || !t.closest) return;
+        if (t.closest("button, [role=button], a, input, .contextMenuButton")) return;
+        var row = t.closest(".friendlistListContainer .friend, .ChatRoomListGroupItem");
+        if (!row || row.closest(".discordish-stage")) return;
+        if (row.__ds_dblbusy) return;                  // de-dupe: don't double-fire on a real dblclick
+        row.__ds_dblbusy = true;
+        win.setTimeout(function () { row.__ds_dblbusy = false; }, 300);
+        row.dispatchEvent(new win.MouseEvent("dblclick", { bubbles: true, cancelable: true, view: win }));
+      } catch (err) {}
+    }, false);
+  }
+
   var __ds_tickn = 0;
   function tick() {
     __ds_tickn++;
     if (__ds_tickn % 7 === 0) { try { pollSignals(); } catch (e) {} }   // ~every 1s
     friendsDocs().forEach(function (doc) {
       try { injectCSS(doc); } catch (e) {}
+      try { oneClickOpen(doc); } catch (e) {}
       try { chatTweaks(doc); } catch (e) {}
       try { ringUI(doc); } catch (e) {}
       try { callStage(doc); } catch (e) {}
@@ -832,7 +857,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 39;
+  var VERSION = 40;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
