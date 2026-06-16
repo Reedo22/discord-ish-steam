@@ -801,19 +801,21 @@
           var b = native.querySelector(".inviteButtonJoinVoice"); if (b) b.click();   // proxy Steam's accept
         });
         dec.addEventListener("click", function () {
-          // Incoming: proxy Steam's decline button. Outgoing (cancel): that button may not
-          // exist, so fall back to the voice store's hang-up to actually kill the call.
-          var b = native.querySelector(".inviteButtonDeclineVoice");
-          if (b) { b.click(); }
-          else {
-            try {
-              var vcs = window.g_FriendsUIApp && window.g_FriendsUIApp.m_VoiceChatStore;
-              if (vcs) {
-                if (vcs.LeaveOneOnOneVoiceChat) vcs.LeaveOneOnOneVoiceChat();
-                else if (vcs.LeaveOneOnOneChat) vcs.LeaveOneOnOneChat();
-                else if (vcs.EndVoiceChat) vcs.EndVoiceChat();
-              }
-            } catch (e) {}
+          // Outgoing (host): no native cancel button to proxy — end via the voice store's
+          // user-action method OnUserEndVoiceChat() (the exact call Steam's own cancel runs).
+          // Incoming: proxy Steam's decline button. Decide at click time from the store.
+          try {
+            var vcs = window.g_FriendsUIApp && window.g_FriendsUIApp.m_VoiceChatStore;
+            var initiated = vcs && vcs.m_VoiceCallState && vcs.m_VoiceCallState.m_bInitiatedOneOnOneCall;
+            if (initiated && vcs) {
+              if (vcs.OnUserEndVoiceChat) vcs.OnUserEndVoiceChat();
+              else if (vcs.OnUserLeaveOneOnOneVoiceChat) vcs.OnUserLeaveOneOnOneVoiceChat();
+              else if (vcs.EndVoiceChatInternal) vcs.EndVoiceChatInternal(false);
+            } else {
+              var b = native.querySelector(".inviteButtonDeclineVoice"); if (b) b.click();
+            }
+          } catch (e) {
+            try { var bb = native.querySelector(".inviteButtonDeclineVoice"); if (bb) bb.click(); } catch (e2) {}
           }
           ring.remove();
         });
@@ -918,7 +920,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 43;
+  var VERSION = 44;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
