@@ -32,9 +32,20 @@ try { iwr -useb "https://steambrew.app/install.ps1" | iex } catch { Write-Warnin
 
 # 4) Millennium writes its config.json only after Steam runs once with it. Launch Steam and wait.
 function Find-MillenniumCfg {
-  $roots = @($env:USERPROFILE,$env:LOCALAPPDATA,$env:APPDATA,"C:\Program Files (x86)\Steam","C:\Program Files\Steam") | Where-Object { $_ -and (Test-Path $_) }
+  # Authoritative: <SteamPath>\millennium\config\config.json, SteamPath from the registry.
+  $sp = $null
+  try { $sp = (Get-ItemProperty 'HKCU:\Software\Valve\Steam' -ErrorAction Stop).SteamPath } catch {}
+  if ($sp) {
+    $sp = $sp -replace '/', '\'
+    $c = Join-Path $sp "millennium\config\config.json"
+    if (Test-Path $c) { return $c }
+  }
+  # Fallback: search the filesystem (covers odd installs).
+  $roots = @($sp,$env:USERPROFILE,$env:LOCALAPPDATA,$env:APPDATA,
+    "C:\Program Files (x86)\Steam","C:\Program Files\Steam") |
+    Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
   foreach ($r in $roots) {
-    $hit = Get-ChildItem -Path $r -Recurse -Depth 4 -Filter config.json -ErrorAction SilentlyContinue |
+    $hit = Get-ChildItem -Path $r -Recurse -Depth 5 -Filter config.json -ErrorAction SilentlyContinue |
       Where-Object { try { (Get-Content $_.FullName -Raw) -match '"enabledPlugins"' } catch { $false } } | Select-Object -First 1
     if ($hit) { return $hit.FullName }
   }

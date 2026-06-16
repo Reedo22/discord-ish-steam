@@ -21,27 +21,41 @@ if (Test-Path (Join-Path $repo ".git")) {
     Write-Host "Cloning into $repo"; git clone $repoUrl $repo
 }
 
-# 2) find Millennium by its config.json (the one with enabledPlugins)
-Write-Host "Searching for Millennium config..."
-$roots = @($env:LOCALAPPDATA, $env:APPDATA, $env:USERPROFILE,
-    "C:\Program Files (x86)\Steam", "C:\Program Files\Steam") | Where-Object { $_ -and (Test-Path $_) }
+# 2) find Millennium's config.json. Millennium stores it at
+#    <SteamPath>\millennium\config\config.json, where SteamPath comes from the
+#    registry (HKCU\Software\Valve\Steam\SteamPath) - NOT a fixed Program Files path,
+#    so this works for Steam installs on any drive. Falls back to a filesystem search.
+Write-Host "Locating Millennium..."
+$steamPath = $null
+try { $steamPath = (Get-ItemProperty 'HKCU:\Software\Valve\Steam' -ErrorAction Stop).SteamPath } catch {}
+if ($steamPath) { $steamPath = $steamPath -replace '/', '\' }
 $cfgFile = $null
-foreach ($r in $roots) {
-    $hit = Get-ChildItem -Path $r -Recurse -Depth 4 -Filter "config.json" -ErrorAction SilentlyContinue |
-        Where-Object { try { (Get-Content $_.FullName -Raw) -match '"enabledPlugins"' } catch { $false } } |
-        Select-Object -First 1
-    if ($hit) { $cfgFile = $hit.FullName; break }
+if ($steamPath) {
+    $candidate = Join-Path $steamPath "millennium\config\config.json"
+    if (Test-Path $candidate) { $cfgFile = $candidate }
 }
-if (-not $cfgFile) { throw "Could not find Millennium config.json (with enabledPlugins). Is Millennium installed and run at least once?" }
-$millennium = Split-Path $cfgFile -Parent
-# Current Millennium keeps config.json in a "config" subfolder while plugins\ and
-# quickcss.css live in the parent (the real Millennium root). Walk up if needed so
-# the plugin/theme land where Steam actually loads them.
-if ((Split-Path $millennium -Leaf) -eq "config") { $millennium = Split-Path $millennium -Parent }
-Write-Host "Found Millennium: $millennium"
+if (-not $cfgFile) {
+    Write-Host "  registry path missed; searching the filesystem..."
+    $roots = @($steamPath, $env:LOCALAPPDATA, $env:APPDATA, $env:USERPROFILE,
+        "C:\Program Files (x86)\Steam", "C:\Program Files\Steam", "D:\Steam", "D:\SteamLibrary") |
+        Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+    foreach ($r in $roots) {
+        $hit = Get-ChildItem -Path $r -Recurse -Depth 5 -Filter "config.json" -ErrorAction SilentlyContinue |
+            Where-Object { try { (Get-Content $_.FullName -Raw) -match '"enabledPlugins"' } catch { $false } } |
+            Select-Object -First 1
+        if ($hit) { $cfgFile = $hit.FullName; break }
+    }
+}
+if (-not $cfgFile) { throw "Could not find Millennium's config.json. Install Millennium (https://steambrew.app), launch Steam and log in once, then re-run." }
+# config.json lives in a "config" subfolder; plugins\ and quick.css live in the
+# Millennium root (the parent). Walk up only when we're actually in that subfolder.
+$configDir = Split-Path $cfgFile -Parent                  # e.g. <steam>\millennium\config
+if ((Split-Path $configDir -Leaf) -eq "config") { $millRoot = Split-Path $configDir -Parent }
+else { $millRoot = $configDir }                           # older flat layout
+Write-Host "Found Millennium config: $cfgFile"
 
-$quickcss   = Join-Path $millennium "quickcss.css"
-$pluginsDir = Join-Path $millennium "plugins"
+$quickcss   = Join-Path $configDir "quick.css"            # Millennium v3 reads quick.css
+$pluginsDir = Join-Path $millRoot  "plugins"              # plugins live beside config/, not under it
 New-Item -ItemType Directory -Force -Path $pluginsDir | Out-Null
 
 # 3) write quickcss (theme baseline; the plugin also live-fetches the latest CSS on boot)
