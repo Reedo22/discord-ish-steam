@@ -197,13 +197,21 @@
   // Viewer: WHEP-negotiate `whepUrl` and render into <video> `v`. If the url is plain
   // http to a non-localhost host, route signaling through our local daemon proxy
   // (/whep?target=) so the secure-context page can reach it (mixed-content workaround).
-  function wConnectShare(whepUrl, v) {
-    try {
+  function wConnectShare(whepUrl, v, tries) {
+    if (tries == null) tries = 12;          // the stream can take a couple seconds to go
+    try {                                    // live (esp. per-app gst pipe) — keep retrying
       if (v.__pc) { try { v.__pc.close(); } catch (e) {} }
       var pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
       v.__pc = pc;
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.ontrack = function (e) { v.srcObject = e.streams[0]; if (v.play) v.play().catch(function () {}); };
+      // re-attempt while the source isn't producing yet; bail if a newer connect superseded us
+      var retry = function (why) {
+        try { pc.close(); } catch (e) {}
+        if (tries > 0 && v.__pc === pc) {
+          setTimeout(function () { if (v.__pc === pc && !(v.srcObject && v.srcObject.active)) wConnectShare(whepUrl, v, tries - 1); }, 800);
+        } else { console.warn("[ds] wConnectShare gave up", why); }
+      };
       pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).then(function () {
         return new Promise(function (r) {
           if (pc.iceGatheringState === "complete") return r();
@@ -214,9 +222,12 @@
         var localish = /^https:/.test(whepUrl) || /^https?:\/\/(127\.0\.0\.1|localhost)\b/.test(whepUrl);
         var url = localish ? whepUrl : (WCTL + "/whep?target=" + encodeURIComponent(whepUrl));
         return fetch(url, { method: "POST", headers: { "Content-Type": "application/sdp" }, body: pc.localDescription.sdp });
-      }).then(function (res) { return res.text(); })
-        .then(function (ans) { return pc.setRemoteDescription({ type: "answer", sdp: ans }); })
-        .catch(function (e) { console.warn("[ds] wConnectShare", e); });
+      }).then(function (res) { if (!res.ok) throw new Error("whep " + res.status); return res.text(); })
+        .then(function (ans) {
+          if (!ans || ans.indexOf("v=0") !== 0) throw new Error("empty answer");
+          return pc.setRemoteDescription({ type: "answer", sdp: ans });
+        })
+        .catch(function (e) { retry(e && e.message || e); });
     } catch (e) { console.warn("[ds] wConnectShare", e); }
   }
   // exposed so the test harness (and later, chat-signaling) can start a viewer:
@@ -407,7 +418,11 @@
     // the button itself glows red while you're sharing. Whole-desktop Remote Play.
     var shareG = el(doc, "div", "ds-ctrl-group");
     var shareB = el(doc, "button", "ds-btn ds-share-ctrl");
-    shareB.title = "Screen share"; shareB.textContent = "🖥";
+    shareB.title = "Screen share";
+    // Discord-style screen-share glyph (monitor with an upward share arrow)
+    shareB.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">'
+      + '<path fill="currentColor" d="M4 2.5h16A2.5 2.5 0 0 1 22.5 5v10a2.5 2.5 0 0 1-2.5 2.5h-4.7l.9 2.3H17a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2h1.3l.9-2.3H4A2.5 2.5 0 0 1 1.5 15V5A2.5 2.5 0 0 1 4 2.5Zm8 3.18-3.9 3.9A.9.9 0 0 0 8.74 11H10v2.36a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1V11h1.26a.9.9 0 0 0 .64-1.42L12 5.68Z"/>'
+      + '</svg>';
     var spop = el(doc, "div", "ds-voice-settings"); spop.style.display = "none";
     var stitle = el(doc, "div", "ds-vs-title"); stitle.textContent = "Screen share"; spop.appendChild(stitle);
     // source picker: a monitor OR a specific app window (per-app share). Monitors capture a
@@ -817,7 +832,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 37;
+  var VERSION = 38;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {

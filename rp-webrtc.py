@@ -249,9 +249,12 @@ def start_capture(geom=None, win=None):
             if not genc:
                 return False
             xid = win if str(win).startswith("0x") else "0x%x" % int(win)
+            # nobuffer + tiny analyze window so the stream goes live in ~1-2s instead of
+            # ffmpeg's default ~5s mpegts probe (the viewer connects almost immediately).
             pipe = ("gst-launch-1.0 -q ximagesrc xid=%s use-damage=false ! %s ! "
-                    "h264parse ! mpegtsmux ! fdsink fd=1 2>/dev/null | "
-                    "ffmpeg -hide_banner -loglevel warning -i - -c copy "
+                    "h264parse ! mpegtsmux alignment=7 ! fdsink fd=1 2>/dev/null | "
+                    "ffmpeg -hide_banner -loglevel warning -fflags nobuffer "
+                    "-probesize 4096 -analyzeduration 200000 -i - -c copy "
                     "-f rtsp -rtsp_transport tcp %s") % (xid, genc, RTSP)
             state["ff"] = subprocess.Popen(["bash", "-c", pipe], stdout=subprocess.DEVNULL,
                                            stderr=subprocess.DEVNULL, start_new_session=True, env=env)
