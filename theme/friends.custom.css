@@ -67,6 +67,18 @@
 
 /* circular avatars + status ring */
 .avatarHolder, .avatar { border-radius: 50% !important; }
+/* keep the avatar IMAGE flush inside its holder so the photo lines up with the
+   circular crop / status ring / frame. Steam offsets the <img> a few px inside the
+   holder, so the "effects" (ring/frame) sit right but the face is shifted — pin the
+   image to fill the holder exactly. (Frame <video> is left alone via the rule below.) */
+.avatarHolder { position: relative !important; }
+.avatarHolder > .avatar,
+.avatarHolder > img.avatar {
+  position: absolute !important;
+  top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
+  width: 100% !important; height: 100% !important;
+  margin: 0 !important; object-fit: cover !important;
+}
 /* ...EXCEPT when an equipped *animated* avatar frame is present. Steam renders the
    frame as a <video> inside the holder and it's square; forcing the avatar circular
    clips the frame and misaligns it. When a frame video exists, keep that avatar +
