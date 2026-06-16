@@ -814,6 +814,7 @@
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
   var VERSION = 35;
+  try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
