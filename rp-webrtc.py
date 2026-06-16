@@ -590,7 +590,7 @@ def ensure_tunnel():
         return None
     stop_tunnel()
     p = _spawn([CLOUDFLARED, "tunnel", "--no-autoupdate", "--url",
-                "http://localhost:%d" % WHEP_PORT],
+                "http://localhost:%d" % MEDIA_PORT],
                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     state["cf"] = p
 
@@ -613,6 +613,7 @@ def ensure_tunnel():
 def stop_capture():
     _kill(state.get("ff"))
     state["ff"] = None
+    stop_fmp4()
 
 
 def _start_win_window(title):
@@ -635,6 +636,7 @@ def start_capture(geom=None, win=None):
     with lock:
         stop_capture()
         ensure_mediamtx()
+        start_fmp4(geom=geom, win=win)
         env = _cap_env()
         if win:
             if IS_WIN:
@@ -707,10 +709,13 @@ class H(BaseHTTPRequestHandler):
             ok = start_capture(geom=geom, win=win)
             # local=1 -> skip the tunnel (LAN-only, faster). default -> public https tunnel.
             tun = None if q.get("local", ["0"])[0] == "1" else ensure_tunnel()
-            out_whep = (tun + "/screen/whep") if tun else lan_whep
-            self._send({"ok": ok, "whep": out_whep, "lan_whep": lan_whep, "tunnel": bool(tun),
-                        "path": "screen", "geom": geom, "encoder": pick_encoder()[0],
-                        "ice": turn_ice()})
+            ws_base = (tun.replace("https://", "wss://") if tun
+                       else "ws://%s:%d" % (ip, MEDIA_PORT))
+            out_ws = ws_base + "/screen/ws"
+            out_whep = (tun + "/screen/whep") if tun else ("http://%s:%d/screen/whep" % (ip, MEDIA_PORT))
+            self._send({"ok": ok, "whep": out_whep, "ws": out_ws, "lan_whep": lan_whep,
+                        "tunnel": bool(tun), "path": "screen", "geom": geom,
+                        "encoder": pick_encoder()[0], "ice": turn_ice()})
         elif u.path == "/stop":
             # stop the capture but KEEP the tunnel warm for the next share (instant restart)
             with lock: stop_capture()
