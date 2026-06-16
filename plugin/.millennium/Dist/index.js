@@ -313,9 +313,11 @@
       cb.addEventListener("change", function () {
         var s = vcStore(); if (!s) return;
         s[setter](cb.checked);
-        // apply to the LIVE mic — NC/echo/AGC only take effect after the voice chat
-        // re-inits its audio pipeline (otherwise the toggle "does nothing").
-        try { if (s.RestartVoiceChatIfConnected) s.RestartVoiceChatIfConnected(); } catch (e) {}
+        // apply to the LIVE mic — NC/echo/AGC ("voice isolation" in Steam's UI) only take
+        // effect after the mic pipeline re-inits. ReinitMicSettings does exactly that
+        // (lighter than restarting the whole voice chat, which didn't apply it).
+        try { if (window.SteamClient.Settings.ReinitMicSettings) SteamClient.Settings.ReinitMicSettings(); } catch (e) {}
+        try { if (s.SetupNoiseGateOnMic) s.SetupNoiseGateOnMic(); } catch (e) {}
       });
       refreshers.push(function () { var s = vcStore(); if (s) cb.checked = !!s[getter](); });
       row.appendChild(sp); row.appendChild(cb); pop.appendChild(row);
@@ -785,7 +787,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 31;
+  var VERSION = 32;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;

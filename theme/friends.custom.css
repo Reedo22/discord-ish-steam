@@ -139,7 +139,8 @@
 .msg { color: var(--dc-text) !important; line-height: 1.4 !important; }
 
 /* ---------- Composer ---------- */
-.chatEntry { background: var(--dc-bg) !important; padding: 0 16px 16px !important; }
+/* vertically center the input row (was top-aligned, so it sat too high) */
+.chatEntry { background: var(--dc-bg) !important; padding: 10px 16px !important; align-items: center !important; }
 /* kill the near-black wrapper + the black inset shadow/gradients that show
    through the input's rounded corners and clutter the composer */
 .chatEntry form,
@@ -289,7 +290,9 @@
   color: var(--dc-text) !important;
   background: var(--dc-raise) !important;
 }
-.VoiceToggle svg, .ChatMessageEntryVoice button svg { margin: 0 !important; flex: 0 0 auto !important; }
+/* center the icon container/SVG inside the round button (Steam right-shifts it ~5px) */
+.VoiceToggle .VoiceToggleIconCtn, .ChatMessageEntryVoice button .VoiceToggleIconCtn,
+.VoiceToggle svg, .ChatMessageEntryVoice button svg { margin: auto !important; flex: 0 0 auto !important; }
 .VoiceToggle:hover,
 .ChatMessageEntryVoice button:hover { background: var(--dc-hover) !important; }
 
