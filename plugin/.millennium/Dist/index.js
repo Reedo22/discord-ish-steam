@@ -832,23 +832,28 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 38;
+  var VERSION = 39;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;
+    // ALWAYS boot the bundled copy first so the plugin can never be left disabled by a
+    // bad/slow update. init() is idempotent (clears its own intervals), so a newer remote
+    // copy can safely re-init over it. Update is best-effort and fully isolated.
+    try { init(); } catch (e) { try { console.warn("[ds] init", e); } catch (e2) {} }
     try {
       fetch(JS_URL, { cache: "no-store" })
         .then(function (r) { return r.ok ? r.text() : null; })
         .then(function (src) {
           var m = src && src.match(/var VERSION = (\d+)/);
           if (m && +m[1] > VERSION) {
-            window.__DISCORDISH_BOOTED__ = false;            // let the newer copy boot itself
-            (0, eval)(src.replace(/^export\s+default[\s\S]*$/m, ""));
-          } else { init(); }
+            window.__DISCORDISH_BOOTED__ = false;            // let the newer copy's boot run its init()
+            try { (0, eval)(src.replace(/^export\s+default[\s\S]*$/m, "")); }
+            catch (e) { window.__DISCORDISH_BOOTED__ = true; try { console.warn("[ds] self-update eval failed, staying on bundled v" + VERSION, e); } catch (e2) {} }
+          }
         })
-        .catch(function () { init(); });
-    } catch (e) { init(); }
+        .catch(function () {});
+    } catch (e) {}
   }
 })();
 
