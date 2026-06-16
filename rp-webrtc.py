@@ -40,7 +40,7 @@ FPS = os.environ.get("DS_FPS", "30")
 # share, works off-LAN). "off" = never tunnel (LAN-only; fastest, no public endpoint).
 TUNNEL = os.environ.get("DS_TUNNEL", "auto").lower()
 
-state = {"ff": None, "mtx": None, "geom": None, "cf": None, "cf_url": None}
+state = {"ff": None, "mtx": None, "geom": None, "cf": None, "cf_url": None, "fmp4": None}
 lock = threading.Lock()
 
 # --- fragmented-MP4 over WebSocket (the universal, tunnel-friendly transport) ---------
@@ -362,6 +362,67 @@ def pick_encoder():
     return ("libx264", ["-vf", "format=yuv420p"],
             ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
              "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", "6M"] + common)
+
+
+def _fmp4_enc_args():
+    """H.264 args tuned for MSE fragmented-MP4: High@5.2 (covers up to 4K so the browser
+    codec string is fixed), no B-frames, 1 s GOP, small fragments for low latency."""
+    name, in_args, _ = pick_encoder()
+    common = ["-profile:v", "high", "-level", "5.2", "-bf", "0", "-g", str(int(FPS)),
+              "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", "2M"]
+    frag = ["-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+            "-frag_duration", "100000", "-f", "mp4", "pipe:1"]
+    if name == "h264_nvenc":
+        return in_args, ["-c:v", "h264_nvenc", "-preset", "p4", "-tune", "ll"] + common + frag
+    if name == "h264_vaapi":
+        return in_args, ["-c:v", "h264_vaapi"] + common + frag
+    if name == "h264_qsv":
+        return in_args, ["-c:v", "h264_qsv"] + common + frag
+    return ["-vf", "format=yuv420p"], ["-c:v", "libx264", "-preset", "veryfast",
+            "-tune", "zerolatency"] + common + frag
+
+
+def start_fmp4(geom=None, win=None):
+    """Start the fragmented-MP4 encode for the WS path and pump it to ws_broadcast.
+    Runs alongside the RTSP/WHEP capture so the viewer can use either transport."""
+    in_args, enc_args = _fmp4_enc_args()
+    env = _cap_env()
+    if IS_WIN and win:
+        cap_in = ["-f", "gdigrab", "-draw_mouse", "1", "-framerate", FPS, "-i", "title=%s" % win]
+    elif win and not IS_WIN:
+        m = monitors(); g = (next((x for x in m if x["primary"]), m[0])["geom"] if m else "1920x1080+0+0")
+        return start_fmp4(geom=g)
+    else:
+        mm = re.match(r"(\d+)x(\d+)\+(\d+)\+(\d+)", geom or "")
+        if not mm:
+            return False
+        w, h, x, y = mm.groups()
+        if IS_WIN:
+            cap_in = ["-f", "gdigrab", "-draw_mouse", "1", "-framerate", FPS,
+                      "-offset_x", x, "-offset_y", y, "-video_size", "%sx%s" % (w, h), "-i", "desktop"]
+        else:
+            cap_in = ["-f", "x11grab", "-draw_mouse", "1", "-framerate", FPS,
+                      "-video_size", "%sx%s" % (w, h), "-i", "%s+%s,%s" % (DISPLAY, x, y)]
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning"] + cap_in + in_args + enc_args
+    with ws_lock:
+        fmp4_init["seg"] = None
+    p = _spawn(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+    state["fmp4"] = p
+    threading.Thread(target=fmp4_pump, args=(p.stdout,), daemon=True).start()
+    return True
+
+
+def stop_fmp4():
+    _kill(state.get("fmp4"))
+    state["fmp4"] = None
+    with ws_lock:
+        fmp4_init["seg"] = None
+        for c in list(ws_clients):
+            try:
+                c.close()
+            except Exception:
+                pass
+        ws_clients.clear()
 
 
 def _win_monitors():
