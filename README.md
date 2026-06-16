@@ -3,14 +3,16 @@
 A Discord-style reskin of the Steam friends/chat client, built on
 [Millennium](https://steambrew.app/). It does **not** replace Steam or touch its
 networking/voice — it restyles the existing CEF web UI and adds a few DOM tweaks
-that CSS can't do, so all of Steam's real voice/calling keeps working.
+that CSS can't do, so all of Steam's real voice/calling keeps working. Runs on
+**Linux and Windows**.
 
 ## What it does
 
 - **Docked single-window layout** (requires Steam's "Dock chats to the friends
   list" setting on) — roster + chat in one window, themed dark like Discord.
 - **Friends list**: one merged list (no In-Game/Online/Offline sections), status
-  dots, circular avatars; **group chats pinned to the top**.
+  dots, circular avatars (animated avatar frames stay square so they aren't
+  clipped); **group chats pinned to the top**.
 - **Composer**: rounded input, blue send button, circular emoji/attach icons,
   centered text, "Message <friend>…" placeholder.
 - **Voice control** moved into a header bar at the top of the chat.
@@ -18,48 +20,66 @@ that CSS can't do, so all of Steam's real voice/calling keeps working.
   participant tiles with name pills, speaking rings, mute badges; real Steam SVG
   control icons (mute/deafen/leave); minimize-to-corner toggle; auto-teardown when
   the call ends; only shown while viewing the call's group.
+- **Screen sharing** over WebRTC — share a whole monitor or a single app window, to
+  a friend on your LAN or over the internet. See below.
 
-## Install (Linux)
+## Install
 
-Requires Millennium installed.
+Requires [Millennium](https://steambrew.app/) installed and run at least once.
 
+**Linux**
 ```bash
-./install.sh   # writes CSS to Millennium quickcss + installs the plugin
+git clone https://github.com/Reedo22/discord-ish-steam ~/discord-ish-steam
+cd ~/discord-ish-steam && ./install.sh
 ```
 
-Then restart Steam (`steam -shutdown` then relaunch). Make sure
-**Settings → Friends & Chat → "Dock chats to the friends list"** is enabled.
+**Windows** (PowerShell)
+```powershell
+irm https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/install.ps1 | iex
+```
+
+The installer links/copies the plugin, writes the theme to Millennium's
+`quickcss.css`, enables the plugin, and sets up the screen-share daemon as a
+service (systemd `--user` on Linux, a logon Scheduled Task on Windows).
+
+Then **fully restart Steam** (`steam -shutdown` then relaunch / Quit from the tray)
+and enable **Settings → Friends & Chat → "Dock chats to the friends list."**
 
 ## Update
 
-The plugin **auto-updates on every Steam boot with no backend** — `index.js`
-fetches the latest CSS and the latest `index.js` from the repo on load, and runs
-the newer copy if its `VERSION` is higher than the bundled one (falling back to
-the bundled code if GitHub is unreachable). This replaced the old Python backend,
-which newer Millennium (Lua backends) rejects as outdated. `plugin.json` now sets
-`useBackend: false`, so the plugin loads on every Millennium version.
+The plugin **auto-updates on every Steam boot, no backend** — `index.js` fetches
+the latest CSS and `index.js` from the repo on load and runs the newer copy when its
+`VERSION` is higher than the bundled one (falling back to the bundled code if GitHub
+is unreachable). `plugin.json` sets `useBackend: false`, so it loads on every
+Millennium version. To update the on-disk copy + daemon: `./update.sh` (Linux) or
+re-run the Windows one-liner.
 
-You can also update the on-disk copy manually any time:
+## Screen sharing
 
-```bash
-./update.sh   # git pull + reinstall; restart Steam to apply
+The share button in the chat header opens a menu to pick a **monitor or an app
+window** plus a quality level, then streams it to the friend you're chatting with.
+
+How it works — a small localhost daemon (`rp-webrtc.py`) does the capture the CEF
+sandbox can't:
+
+```
+capture ──▶ H.264 hardware encode ──▶ MediaMTX ──▶ WebRTC / WHEP ──▶ viewer's <video>
+(x11grab / gst ximagesrc          (NVENC / VAAPI /   (RTSP→WebRTC)
+ on Linux; gdigrab on Windows)     QSV, else x264)
 ```
 
-## Windows port — checklist (do in a Windows session)
+- **Per-window capture is occlusion-proof on Linux** (grabs the window's own buffer
+  via `ximagesrc xid`), so the window can be behind others — just not minimized. On
+  Windows it uses `gdigrab` by window title.
+- **Same-LAN** viewers connect directly. **Off-LAN** sharing uses an on-demand
+  Cloudflare quick tunnel for valid-HTTPS signaling; media stays P2P via STUN.
+- Viewers only decode H.264, so any GPU/OS can watch.
 
-Most of the client is OS-agnostic (CSS theme + plugin: call UI, voice settings,
-broadcast invite all work once installed). What needs finishing on Windows:
-
-1. **Paths**: confirm Millennium's Windows dirs (quickcss / plugins / config.json —
-   likely under `%LOCALAPPDATA%\Millennium`). Fix `install.ps1` + the backend
-   `_paths()` Windows branch + `CAPTURE_EXE` in the plugin.
-2. **Install**: run/fix `install.ps1` (clone → quickcss → copy plugin → enable).
-3. **Screen capture**: `stream-capture.ps1` uses ffmpeg `gdigrab` (needs ffmpeg/
-   ffplay on PATH). Verify capture + the `MONITORS` coords + launchOpts format
-   (Windows uses `X,Y,W,H`; Linux uses `WxH+X+Y`) in `streamScreen()`.
-4. **Auto-update**: backend git-pull on boot — confirm git available + repo path.
-
-The repo is **public**, so cloning/auto-update works for friends.
+Host requirements: **Python 3**, **ffmpeg** on PATH, and **MediaMTX** in `bin/`
+(Linux: download from [mediamtx releases](https://github.com/bluenviron/mediamtx/releases);
+Windows: `install.ps1` fetches it via `bin\fetch-windows.ps1`). Linux per-window
+capture also needs `gstreamer1.0-tools` + plugins. `cloudflared` in `bin/` is
+optional (off-LAN only).
 
 ## How it works
 
@@ -67,31 +87,18 @@ The repo is **public**, so cloning/auto-update works for friends.
   `quickcss.css`, layered on top of your active theme).
 - `plugin/.millennium/Dist/index.js` — hand-written Millennium frontend module
   (no build step) that runs in SharedJSContext, reaches the friends popup via
-  `g_PopupManager`, and does the DOM tweaks (voice→header, placeholder, call stage).
+  `g_PopupManager`, does the DOM tweaks (voice→header, placeholder, call stage),
+  and drives the share daemon over `127.0.0.1:48592`.
+- `rp-webrtc.py` — the cross-platform screen-share daemon (control API + capture).
+- `bin/rp-mediamtx.yml` — MediaMTX config (RTSP ingest + WebRTC/WHEP).
 - `tools/` — CDP helpers used during development to inspect/inject live.
-- `docs/` — design spec, implementation plan, and the live DOM recon notes.
-
-## Screen sharing
-
-The 🖥 button in the chat header opens a stream menu with monitor + quality
-pickers and two one-click share buttons:
-
-- **Remote Play to \<friend\>** (low latency) — mirrors the chosen monitor into a
-  borderless capture window (`ffplay`/`gdigrab`) and uses
-  [RemotePlayWhatever](https://github.com/m4dEngi/RemotePlayWhatever) to host a
-  Remote Play Together session under Spacewar (AppID 480) and invite the friend.
-  Steam streams the capture window over RPT — much lower latency than broadcast,
-  and the friend doesn't need to own anything.
-- **Broadcast to \<friend\>** — same capture mirror, shared via Steam Broadcast
-  (Go Live + watch invite). Works for any friend but has ~7s delay.
-- **Stop sharing** — ends the RPT session (`CloseGroup`) and closes the capture.
-
-Requirements: `ffplay` (ffmpeg) on PATH, and RemotePlayWhatever — `install.sh`
-fetches the Linux AppImage into `bin/` automatically; on Windows install it and
-ensure `stream-capture.ps1` can find it.
+- `docs/recon-friends-dom.md` — live DOM recon notes (selectors).
 
 ## Notes / limits
+
 - Steam's voice UI is global (roster header), so the call stage is scoped to the
   named group you're viewing rather than bound to a single chat.
-- Windows is supported via `install.ps1` (`irm …/install.ps1 | iex`); it
-  self-discovers the Millennium install. Dev target remains Linux.
+- Per-window share can't capture a **minimized** window (no frames are presented).
+- On Steam clients running Millennium ≥ v3, CEF uses a debugging *pipe* rather than a
+  TCP port, so the `tools/` CDP helpers (which expect a port) won't attach unless you
+  create `.cef-enable-remote-debugging` in your Steam root.

@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
-# Persist the Discord-ish theme into Millennium's quickcss (layers on top of the
-# active theme, survives Steam restarts). CSS source of truth = theme/friends.custom.css.
+# discord-ish-steam — Linux installer.
+#  - links the Millennium plugin + writes the theme into quickcss
+#  - enables the plugin in Millennium's config.json
+#  - installs the screen-share daemon (rp-webrtc.py) as a systemd --user service so it
+#    auto-starts on login and restarts if it dies.
+# CSS source of truth = theme/friends.custom.css.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 QUICKCSS="$HOME/.config/millennium/quickcss.css"
+CONFIG="$HOME/.config/millennium/config.json"
+PLUGINS="$HOME/.local/share/millennium/plugins"
 
 if [[ ! -d "$(dirname "$QUICKCSS")" ]]; then
   echo "Millennium config dir not found at $(dirname "$QUICKCSS") — is Millennium installed?" >&2
   exit 1
 fi
 
+# --- theme (quickcss baseline; the plugin also live-fetches the latest CSS on boot) ---
 {
   echo "/* Quick CSS file created by Millennium */"
   echo "/* === discord-ish steam reskin (managed by steam-reskin/install.sh) === */"
@@ -17,13 +24,10 @@ fi
 } > "$QUICKCSS"
 echo "Wrote $(wc -l < "$QUICKCSS") lines to $QUICKCSS"
 
-# --- plugin (voice-to-top-bar + placeholder; needs JS) ---
-PLUGINS="$HOME/.local/share/millennium/plugins"
-CONFIG="$HOME/.config/millennium/config.json"
+# --- plugin ---
 if [[ -d "$PLUGINS" ]]; then
   ln -sfn "$HERE/plugin" "$PLUGINS/discordish-chat"
   echo "Linked plugin -> $PLUGINS/discordish-chat"
-  # enable it in config.json (idempotent)
   python3 - "$CONFIG" <<'PY'
 import json, sys
 cfg_path = sys.argv[1]
@@ -38,42 +42,41 @@ else:
 PY
 fi
 
-# (RemotePlayWhatever removed — the Remote Play session + invite are now created
-# natively by the plugin via the real Spacewar/appid-480 RPT anchor + whole-desktop
-# streaming. No external binary, no capture server, no launch hijack.)
+# --- screen-share daemon (rp-webrtc.py) as a systemd --user service ---
+# Captures a monitor/window (ffmpeg x11grab / gst ximagesrc + NVENC/VAAPI/QSV), publishes
+# via MediaMTX, serves WebRTC/WHEP to the viewer's plugin. Auto-starts + auto-restarts.
+DISPLAY_VAL="${DISPLAY:-:1}"
+SVC_DIR="$HOME/.config/systemd/user"
+mkdir -p "$SVC_DIR"
+cat > "$SVC_DIR/discordish-rp-webrtc.service" <<SVC
+[Unit]
+Description=discord-ish-steam screen-share daemon (rp-webrtc)
+After=graphical-session.target
 
-# --- REMOVE the old Spacewar-hider (it BREAKS streaming) ---
-# The hider minimized the Spacewar window; a minimized window presents no GL frames,
-# so Remote Play joins the session but the video never starts. Tear it down if a
-# previous install set it up.
-rm -f "$HOME/.config/autostart/discordish-rp-hide.desktop"
-pkill -x rp-hide-spacewar.sh 2>/dev/null || true
+[Service]
+Type=simple
+Environment=DISPLAY=$DISPLAY_VAL
+WorkingDirectory=$HERE
+ExecStart=/usr/bin/python3 $HERE/rp-webrtc.py
+Restart=always
+RestartSec=3
 
-# --- VIEWER-side fix: libvpx.so.6 for Steam's streaming client (appid 202355) ---
-# Steam's streaming_client links libvpx.so.6, but Ubuntu/Pop 24.04 ship libvpx9 only,
-# so the client crashes instantly on every accept. Steam's own runtime bundles a valid
-# libvpx.so.6 — install it system-wide so the client (launched outside the runtime with
-# only $ORIGIN RUNPATH, which doesn't cover transitive deps) can load it.
-if ! ldconfig -p 2>/dev/null | grep -q "libvpx.so.6"; then
-  SC_VPX="$(find "$HOME/.steam" "$HOME/.local/share/Steam" -path '*SteamLinuxRuntime_sniper*/libvpx.so.6.3.0' -type f 2>/dev/null | head -1)"
-  if [[ -n "$SC_VPX" ]]; then
-    echo "Installing libvpx.so.6 system-wide for Steam Remote Play (needs sudo)…"
-    sudo install -m0644 "$SC_VPX" /usr/lib/x86_64-linux-gnu/libvpx.so.6 && sudo ldconfig \
-      && echo "  installed libvpx.so.6" \
-      || echo "  ! couldn't install libvpx.so.6 — Remote Play streaming will crash on this machine." >&2
-  else
-    echo "  ! libvpx.so.6 missing and no bundled copy found — Remote Play streaming will crash here." >&2
-  fi
+[Install]
+WantedBy=default.target
+SVC
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl --user daemon-reload
+  systemctl --user enable --now discordish-rp-webrtc.service && \
+    echo "Installed + started discordish-rp-webrtc.service"
+  # keep the user service alive across logout/before GUI login
+  loginctl enable-linger "$USER" >/dev/null 2>&1 || true
+else
+  echo "systemd --user not available; run the daemon manually: python3 $HERE/rp-webrtc.py" >&2
 fi
 
-# --- VIEWER-side WARNING: Millennium vs the streaming client ---
-# Millennium LD_PRELOADs libmillennium_hhx64.so into every Steam-launched process,
-# including the Remote Play streaming_client — which then exits in ~1s. If THIS machine
-# is used to RECEIVE streams, disable the 64-bit hook:
-#   sudo mv /usr/lib/millennium/libmillennium_hhx64.so{,.disabled}
-if [[ -f /usr/lib/millennium/libmillennium_hhx64.so ]]; then
-  echo "  ! NOTE: Millennium's libmillennium_hhx64.so breaks Steam Remote Play *receiving* on this box." >&2
-  echo "    If you watch streams here: sudo mv /usr/lib/millennium/libmillennium_hhx64.so{,.disabled}" >&2
-fi
+# --- host-side capture prerequisites ---
+command -v ffmpeg       >/dev/null 2>&1 || echo "  ! ffmpeg not found — screen-share capture needs it (apt install ffmpeg)." >&2
+command -v gst-launch-1.0 >/dev/null 2>&1 || echo "  ! gstreamer not found — per-window (occlusion-proof) capture needs it (apt install gstreamer1.0-tools gstreamer1.0-plugins-{good,bad,ugly})." >&2
+[[ -x "$HERE/bin/mediamtx" ]] || echo "  ! bin/mediamtx missing — download the Linux build from github.com/bluenviron/mediamtx/releases into bin/." >&2
 
 echo "RESTART Steam to load the plugin + clean-boot the CSS."

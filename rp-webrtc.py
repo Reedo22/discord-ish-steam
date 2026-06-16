@@ -22,20 +22,61 @@ import urllib.request, urllib.error
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
+IS_WIN = os.name == "nt"
+EXE = ".exe" if IS_WIN else ""
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.path.join(HERE, "bin")
-MEDIAMTX = os.path.join(BIN, "mediamtx")
+MEDIAMTX = os.path.join(BIN, "mediamtx" + EXE)
 MTX_CFG = os.path.join(BIN, "rp-mediamtx.yml")
-CLOUDFLARED = os.path.join(BIN, "cloudflared")
+CLOUDFLARED = os.path.join(BIN, "cloudflared" + EXE)
 PORT = 48592                 # control API (was 48591 for the old capture server)
 RTSP = "rtsp://127.0.0.1:8554/screen"
 WHEP_PORT = 8889
-DISPLAY = os.environ.get("DISPLAY", ":1")
+DISPLAY = os.environ.get("DISPLAY", ":1")   # Linux/X11 only; ignored on Windows
 BITRATE = os.environ.get("DS_BITRATE", "12M")
 FPS = os.environ.get("DS_FPS", "30")
 
 state = {"ff": None, "mtx": None, "geom": None, "cf": None, "cf_url": None}
 lock = threading.Lock()
+
+
+# --- cross-platform process helpers --------------------------------------------------
+# Linux: start each child in its own session so we can kill the whole pipeline group.
+# Windows: new process group; terminate() (+ taskkill for any children) tears it down.
+def _spawn(cmd, **kw):
+    if IS_WIN:
+        kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | 0x08000000  # +NO_WINDOW
+    else:
+        kw["start_new_session"] = True
+    return subprocess.Popen(cmd, **kw)
+
+
+def _kill(p):
+    if not p or p.poll() is not None:
+        return
+    try:
+        if IS_WIN:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+        p.wait(timeout=3)
+    except Exception:
+        try:
+            if IS_WIN:
+                p.kill()
+            else:
+                os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except Exception:
+            pass
+
+
+def _cap_env():
+    """Env for capture children. Linux pins DISPLAY; Windows uses the desktop session."""
+    if IS_WIN:
+        return dict(os.environ)
+    return {**os.environ, "DISPLAY": DISPLAY}
 
 
 def lan_ip():
@@ -120,7 +161,73 @@ def pick_encoder():
              "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", "6M"] + common)
 
 
+def _win_monitors():
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+    out = []
+    PROC = ctypes.WINFUNCTYPE(ctypes.c_int, wintypes.HMONITOR, wintypes.HDC,
+                              ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+
+    def cb(hmon, hdc, lprc, lparam):
+        mi = MONITORINFO(); mi.cbSize = ctypes.sizeof(MONITORINFO)
+        user32.GetMonitorInfoW(hmon, ctypes.byref(mi))
+        r = mi.rcMonitor
+        out.append({"name": "DISPLAY%d" % (len(out) + 1),
+                    "geom": "%dx%d+%d+%d" % (r.right - r.left, r.bottom - r.top, r.left, r.top),
+                    "primary": bool(mi.dwFlags & 1)})   # MONITORINFOF_PRIMARY
+        return 1
+
+    user32.EnumDisplayMonitors(0, 0, PROC(cb), 0)
+    return out
+
+
+def _win_windows():
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    out = []
+    PROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+
+    def cb(hwnd, lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        n = user32.GetWindowTextLengthW(hwnd)
+        if n == 0:
+            return True
+        buf = ctypes.create_unicode_buffer(n + 1)
+        user32.GetWindowTextW(hwnd, buf, n + 1)
+        title = buf.value
+        if not title:
+            return True
+        # skip tool windows (palettes, tray helpers)
+        if user32.GetWindowLongW(hwnd, -20) & 0x00000080:   # GWL_EXSTYLE & WS_EX_TOOLWINDOW
+            return True
+        rect = wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        w, h = rect.right - rect.left, rect.bottom - rect.top
+        if w < 120 or h < 100:
+            return True
+        # On Windows the capture handle is the title (gdigrab uses -i title=...).
+        out.append({"id": title, "title": title,
+                    "geom": "%dx%d+%d+%d" % (w, h, rect.left, rect.top)})
+        return True
+
+    user32.EnumWindows(PROC(cb), 0)
+    return out
+
+
 def monitors():
+    if IS_WIN:
+        try:
+            return _win_monitors()
+        except Exception:
+            return []
     out = []
     try:
         xr = subprocess.run(["xrandr", "--query"], capture_output=True, text=True,
@@ -137,8 +244,14 @@ def monitors():
 
 
 def windows():
-    """App windows with on-screen geometry, so 'share an app' = capture that region.
-    (Reuses the x11grab pipeline; the window must stay visible/un-occluded.)"""
+    """App windows with on-screen geometry, so 'share an app' = capture that window.
+    Linux: occlusion-proof via gst ximagesrc xid. Windows: gdigrab -i title= (the id IS
+    the title) — captures the window's DC, tolerant of being partly behind others."""
+    if IS_WIN:
+        try:
+            return _win_windows()
+        except Exception:
+            return []
     out = []
     try:
         wm = subprocess.run(["wmctrl", "-lG"], capture_output=True, text=True,
@@ -167,7 +280,12 @@ def ensure_mediamtx():
         return
     # already running externally?
     try:
-        if subprocess.run(["pgrep", "-x", "mediamtx"], capture_output=True).returncode == 0:
+        if IS_WIN:
+            tl = subprocess.run(["tasklist", "/FI", "IMAGENAME eq mediamtx.exe"],
+                                capture_output=True, text=True).stdout
+            if "mediamtx.exe" in tl:
+                return
+        elif subprocess.run(["pgrep", "-x", "mediamtx"], capture_output=True).returncode == 0:
             return
     except Exception:
         pass
@@ -179,19 +297,13 @@ def ensure_mediamtx():
     pip = public_ip()
     if pip:
         env["MTX_WEBRTCADDITIONALHOSTS"] = pip
-    state["mtx"] = subprocess.Popen([MEDIAMTX, MTX_CFG], stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL, start_new_session=True, env=env)
+    state["mtx"] = _spawn([MEDIAMTX, MTX_CFG], stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL, env=env)
     time.sleep(1.5)
 
 
 def stop_tunnel():
-    p = state.get("cf")
-    if p and p.poll() is None:
-        try:
-            os.killpg(os.getpgid(p.pid), signal.SIGTERM); p.wait(timeout=3)
-        except Exception:
-            try: os.killpg(os.getpgid(p.pid), signal.SIGKILL)
-            except Exception: pass
+    _kill(state.get("cf"))
     state["cf"] = None; state["cf_url"] = None
 
 
@@ -204,10 +316,9 @@ def ensure_tunnel():
     if not os.path.exists(CLOUDFLARED):
         return None
     stop_tunnel()
-    p = subprocess.Popen([CLOUDFLARED, "tunnel", "--no-autoupdate", "--url",
-                          "http://localhost:%d" % WHEP_PORT],
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                         start_new_session=True, text=True)
+    p = _spawn([CLOUDFLARED, "tunnel", "--no-autoupdate", "--url",
+                "http://localhost:%d" % WHEP_PORT],
+               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     state["cf"] = p
 
     def reader():
@@ -227,24 +338,36 @@ def ensure_tunnel():
 
 
 def stop_capture():
-    p = state.get("ff")
-    if p and p.poll() is None:
-        try:
-            os.killpg(os.getpgid(p.pid), signal.SIGTERM); p.wait(timeout=3)
-        except Exception:
-            try: os.killpg(os.getpgid(p.pid), signal.SIGKILL)
-            except Exception: pass
+    _kill(state.get("ff"))
     state["ff"] = None
+
+
+def _start_win_window(title):
+    """Windows per-window capture: ffmpeg gdigrab by window title. gdigrab grabs the
+    window's device context, so it keeps working when the window is partly behind
+    others (it must not be minimized). GPU-encode straight to RTSP."""
+    name, in_args, enc_args = pick_encoder()
+    cmd = (["ffmpeg", "-hide_banner", "-loglevel", "warning",
+            "-f", "gdigrab", "-draw_mouse", "1", "-framerate", FPS,
+            "-i", "title=%s" % title]
+           + in_args + enc_args
+           + ["-f", "rtsp", "-rtsp_transport", "tcp", RTSP])
+    state["ff"] = _spawn(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         env=_cap_env())
+    state["geom"] = "win:" + title
+    return True
 
 
 def start_capture(geom=None, win=None):
     with lock:
         stop_capture()
         ensure_mediamtx()
-        env = {**os.environ, "DISPLAY": DISPLAY}
+        env = _cap_env()
         if win:
-            # Occlusion-proof single-window capture: grab the window's own buffer by XID
-            # (gstreamer ximagesrc xid), GPU-encode, pipe h264/mpegts to ffmpeg -> RTSP.
+            if IS_WIN:
+                return _start_win_window(win)
+            # Linux: occlusion-proof single-window capture — grab the window's own buffer
+            # by XID (gstreamer ximagesrc xid), GPU-encode, pipe h264/mpegts to ffmpeg.
             gname, genc = pick_gst_encoder()
             if not genc:
                 return False
@@ -256,23 +379,30 @@ def start_capture(geom=None, win=None):
                     "ffmpeg -hide_banner -loglevel warning -fflags nobuffer "
                     "-probesize 4096 -analyzeduration 200000 -i - -c copy "
                     "-f rtsp -rtsp_transport tcp %s") % (xid, genc, RTSP)
-            state["ff"] = subprocess.Popen(["bash", "-c", pipe], stdout=subprocess.DEVNULL,
-                                           stderr=subprocess.DEVNULL, start_new_session=True, env=env)
+            state["ff"] = _spawn(["bash", "-c", pipe], stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, env=env)
             state["geom"] = "win:" + xid
             return True
-        # geom = WxH+X+Y -> ffmpeg -video_size WxH -i :D+X,Y (whole monitor / region)
+        # geom = WxH+X+Y -> monitor / region capture
         m = re.match(r"(\d+)x(\d+)\+(\d+)\+(\d+)", geom or "")
         if not m:
             return False
         w, h, x, y = m.groups()
         name, in_args, enc_args = pick_encoder()
-        cmd = (["ffmpeg", "-hide_banner", "-loglevel", "warning",
-                "-f", "x11grab", "-draw_mouse", "1", "-framerate", FPS,
-                "-video_size", "%sx%s" % (w, h), "-i", "%s+%s,%s" % (DISPLAY, x, y)]
-               + in_args + enc_args
+        if IS_WIN:
+            # Windows: gdigrab the desktop at the monitor's offset+size.
+            cap_in = ["-f", "gdigrab", "-draw_mouse", "1", "-framerate", FPS,
+                      "-offset_x", x, "-offset_y", y, "-video_size", "%sx%s" % (w, h),
+                      "-i", "desktop"]
+        else:
+            # Linux: x11grab a monitor region -> :D+X,Y
+            cap_in = ["-f", "x11grab", "-draw_mouse", "1", "-framerate", FPS,
+                      "-video_size", "%sx%s" % (w, h), "-i", "%s+%s,%s" % (DISPLAY, x, y)]
+        cmd = (["ffmpeg", "-hide_banner", "-loglevel", "warning"]
+               + cap_in + in_args + enc_args
                + ["-f", "rtsp", "-rtsp_transport", "tcp", RTSP])
-        state["ff"] = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                                       stderr=subprocess.DEVNULL, start_new_session=True, env=env)
+        state["ff"] = _spawn(cmd, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, env=env)
         state["geom"] = geom
         return True
 

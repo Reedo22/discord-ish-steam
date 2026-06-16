@@ -3,8 +3,11 @@ bin/remoteplaywhatever-x86_64.AppImage
 bin/*.AppImage
 __pycache__/
 bin/mediamtx
+bin/mediamtx.exe
 bin/cloudflared
+bin/cloudflared.exe
 bin/mediamtx.yml
+bin/*.zip
 bin/LICENSE
 bin/auto.crt
 bin/auto.key

@@ -1,6 +1,10 @@
-# discord-ish-steam — Windows installer (self-discovering).
+# discord-ish-steam — Windows installer.
 # Run in PowerShell:  irm https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/install.ps1 | iex
-# (or clone the repo and run this script). Requires git + Millennium already installed.
+# (or clone the repo and run .\install.ps1). Requires git + Millennium already installed.
+#
+# Installs the Millennium plugin + theme, then sets up the screen-share daemon
+# (rp-webrtc.py): a localhost service that captures a monitor/window (ffmpeg gdigrab +
+# NVENC/QSV), publishes via MediaMTX, and serves WebRTC/WHEP to the viewer's plugin.
 $ErrorActionPreference = "Stop"
 
 $repoUrl = "https://github.com/Reedo22/discord-ish-steam"
@@ -10,11 +14,9 @@ Write-Host "== discord-ish-steam Windows installer =="
 
 # 1) clone or update the repo
 if (Test-Path (Join-Path $repo ".git")) {
-    Write-Host "Updating repo at $repo"
-    git -C $repo pull --ff-only
+    Write-Host "Updating repo at $repo"; git -C $repo pull --ff-only
 } else {
-    Write-Host "Cloning into $repo"
-    git clone $repoUrl $repo
+    Write-Host "Cloning into $repo"; git clone $repoUrl $repo
 }
 
 # 2) find Millennium by its config.json (the one with enabledPlugins)
@@ -36,19 +38,15 @@ $quickcss   = Join-Path $millennium "quickcss.css"
 $pluginsDir = Join-Path $millennium "plugins"
 New-Item -ItemType Directory -Force -Path $pluginsDir | Out-Null
 
-# 3) write quickcss (theme)
+# 3) write quickcss (theme baseline; the plugin also live-fetches the latest CSS on boot)
 $css = Get-Content (Join-Path $repo "theme\friends.custom.css") -Raw
 "/* Quick CSS file created by Millennium */`r`n/* discord-ish */`r`n$css" | Set-Content $quickcss -Encoding UTF8
 Write-Host "Wrote theme to $quickcss"
 
-# 4) copy plugin + patch the Windows capture path to this clone
+# 4) install the plugin
 $dest = Join-Path $pluginsDir "discordish-chat"
 if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
 Copy-Item (Join-Path $repo "plugin") $dest -Recurse -Force
-$idx = Join-Path $dest ".millennium\Dist\index.js"
-$launcher = (Join-Path $repo "rp-capture-launch.ps1").Replace('\','\\')
-(Get-Content $idx -Raw).Replace('C:\\Users\\reedo\\discord-ish-steam\\rp-capture-launch.ps1', $launcher) |
-    Set-Content $idx -Encoding UTF8
 Write-Host "Installed plugin to $dest"
 
 # 5) enable the plugin in config.json
@@ -61,24 +59,31 @@ if ($enabled -notcontains "discordish-chat") {
     Write-Host "Enabled discordish-chat in config.json"
 } else { Write-Host "discordish-chat already enabled" }
 
-# 6) (RemotePlayWhatever removed) The Remote Play session + invite are now created
-#    natively by the plugin via the Spacewar/appid-480 launch hijack, same as Linux —
-#    no external binary. Spacewar (free, appid 480) must be installed in your library.
-$spacewar = $false
-foreach ($r in $roots) {
-    if (Test-Path (Join-Path $r "steamapps\common\Spacewar")) { $spacewar = $true; break }
-}
-if (-not $spacewar) {
-    Write-Warning "Spacewar (appid 480) not detected - install it free from your Steam library (search 'Spacewar') so Remote Play screen-share works."
+# 6) screen-share daemon prerequisites
+$py = $null
+if (Get-Command python -ErrorAction SilentlyContinue) { $py = (Get-Command python) }
+elseif (Get-Command py -ErrorAction SilentlyContinue) { $py = (Get-Command py) }
+if (-not $py) { Write-Warning "Python not found - the screen-share daemon needs it. 'winget install Python.Python.3'." }
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+    Write-Warning "ffmpeg not on PATH - screen-share capture needs it ('winget install Gyan.FFmpeg'). Theme/calls/voice still work."
 }
 
-# 7) checks
-if (-not (Get-Command python -ErrorAction SilentlyContinue) -and -not (Get-Command py -ErrorAction SilentlyContinue)) {
-    Write-Warning "Python not found - the screen-share capture server needs it. Install from python.org or 'winget install Python.Python.3'."
+# 7) fetch the Windows host binaries (MediaMTX + cloudflared) into bin\
+& (Join-Path $repo "bin\fetch-windows.ps1")
+
+# 8) register a logon task so the daemon is always up (mirrors the Linux systemd service)
+if ($py) {
+    $pyw = ($py.Source -replace "python\.exe$", "pythonw.exe")
+    if (-not (Test-Path $pyw)) { $pyw = $py.Source }
+    $daemon  = Join-Path $repo "rp-webrtc.py"
+    $action  = New-ScheduledTaskAction -Execute $pyw -Argument "`"$daemon`""
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    $set     = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+    Register-ScheduledTask -TaskName "discordish-rp-webrtc" -Action $action -Trigger $trigger -Settings $set -Force | Out-Null
+    Write-Host "Registered logon task 'discordish-rp-webrtc' (auto-starts the screen-share daemon)."
+    Start-Process $pyw -ArgumentList "`"$daemon`"" -WindowStyle Hidden
+    Write-Host "Started the screen-share daemon."
 }
-if (-not (Get-Command ffplay -ErrorAction SilentlyContinue)) {
-    Write-Warning "ffplay/ffmpeg not on PATH - screen-share capture needs it ('winget install Gyan.FFmpeg'). Theme/calls/voice still work."
-}
+
 Write-Host ""
 Write-Host "DONE. Now: 1) fully restart Steam,  2) Friends settings -> enable 'Dock chats to the friends list'."
-Write-Host "If something didn't load, paste this output back and we'll fix the path."
