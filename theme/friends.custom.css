@@ -355,6 +355,23 @@
 .chatTabList .Yd-DsWkYiFiYwpci--Yk_ > div > div + div[title="Close this tab"],
 .chatTabList .Yd-DsWkYiFiYwpci--Yk_ [title="Close this tab"] { display: none !important; }
 
+/* show the FULL conversation name — Steam sizes tabs narrow (~17 chars then ellipsis)
+   because they were meant to sit in a row; as our single header it should fit the name. */
+.chatTabList .Yd-DsWkYiFiYwpci--Yk_ { max-width: none !important; width: auto !important; }
+.chatTabList .Yd-DsWkYiFiYwpci--Yk_ .labelHolder,
+.chatTabList .Yd-DsWkYiFiYwpci--Yk_ .nOdcT-MoOaXGePXLyPe0H,
+.chatTabList .Yd-DsWkYiFiYwpci--Yk_ .playerName {
+  max-width: none !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: nowrap !important;
+}
+
+/* the active tab is our title LABEL, not a real tab — kill pointer events on the whole
+   tab so it can't be dragged out into its own window (tear-off). The roster is the
+   navigation; there are no other visible tabs to click. */
+.chatTabList .Yd-DsWkYiFiYwpci--Yk_ { pointer-events: none !important; }
+
 /* ===================== Discord-style call (mirror of Steam's voice UI) ===================== */
 /* While in a call, hide Steam's original voice UI; we render our own clean tiles
    + control buttons that proxy-click the (hidden, still-functional) originals. */
