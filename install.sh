@@ -12,9 +12,26 @@ CONFIG="$HOME/.config/millennium/config.json"
 PLUGINS="$HOME/.local/share/millennium/plugins"
 
 if [[ ! -d "$(dirname "$QUICKCSS")" ]]; then
-  echo "Millennium config dir not found at $(dirname "$QUICKCSS") — is Millennium installed?" >&2
+  echo "Millennium not found at $(dirname "$QUICKCSS")." >&2
+  echo "Install it first:  curl -fsSL \"https://steambrew.app/install.sh\" | bash" >&2
+  echo "then run Steam once and re-run this installer." >&2
   exit 1
 fi
+
+# --- system dependencies (ffmpeg + gstreamer for capture, python3 for the daemon) ---
+install_deps() {
+  local apt=(ffmpeg python3 gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad wmctrl)
+  local dnf=(ffmpeg python3 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free wmctrl)
+  local pac=(ffmpeg python gst-plugins-base gst-plugins-good gst-plugins-bad wmctrl)
+  if   command -v apt-get >/dev/null 2>&1; then echo "Installing deps (apt, needs sudo)…"; sudo apt-get install -y "${apt[@]}" || echo "  ! apt install failed — install manually: ${apt[*]}" >&2
+  elif command -v dnf     >/dev/null 2>&1; then echo "Installing deps (dnf, needs sudo)…"; sudo dnf install -y "${dnf[@]}" || echo "  ! dnf install failed" >&2
+  elif command -v pacman  >/dev/null 2>&1; then echo "Installing deps (pacman, needs sudo)…"; sudo pacman -S --needed --noconfirm "${pac[@]}" || echo "  ! pacman install failed" >&2
+  else echo "  ! Unknown package manager — install manually: ffmpeg python3 gstreamer + plugins wmctrl" >&2; fi
+}
+install_deps
+
+# --- host binaries (MediaMTX + cloudflared) ---
+bash "$HERE/bin/fetch-linux.sh" || echo "  ! binary fetch failed — see bin/fetch-linux.sh" >&2
 
 # --- theme (quickcss baseline; the plugin also live-fetches the latest CSS on boot) ---
 {
@@ -74,9 +91,11 @@ else
   echo "systemd --user not available; run the daemon manually: python3 $HERE/rp-webrtc.py" >&2
 fi
 
-# --- host-side capture prerequisites ---
-command -v ffmpeg       >/dev/null 2>&1 || echo "  ! ffmpeg not found — screen-share capture needs it (apt install ffmpeg)." >&2
-command -v gst-launch-1.0 >/dev/null 2>&1 || echo "  ! gstreamer not found — per-window (occlusion-proof) capture needs it (apt install gstreamer1.0-tools gstreamer1.0-plugins-{good,bad,ugly})." >&2
-[[ -x "$HERE/bin/mediamtx" ]] || echo "  ! bin/mediamtx missing — download the Linux build from github.com/bluenviron/mediamtx/releases into bin/." >&2
+# --- verify the capture stack is in place ---
+ok=1
+command -v ffmpeg         >/dev/null 2>&1 || { echo "  ! ffmpeg still missing — screen-share capture won't work." >&2; ok=0; }
+command -v gst-launch-1.0 >/dev/null 2>&1 || echo "  ! gstreamer missing — per-window (occlusion-proof) capture won't work; monitor capture still will." >&2
+[[ -x "$HERE/bin/mediamtx" ]] || { echo "  ! bin/mediamtx missing — screen share won't work." >&2; ok=0; }
+[[ $ok = 1 ]] && echo "Capture stack OK (ffmpeg + mediamtx present)."
 
 echo "RESTART Steam to load the plugin + clean-boot the CSS."

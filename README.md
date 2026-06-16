@@ -38,9 +38,12 @@ cd ~/discord-ish-steam && ./install.sh
 irm https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/install.ps1 | iex
 ```
 
-The installer links/copies the plugin, writes the theme to Millennium's
+The installer is one-stop: it installs the system dependencies (ffmpeg, gstreamer,
+python3 — via apt/dnf/pacman on Linux), fetches the host binaries (MediaMTX +
+cloudflared), links/copies the plugin, writes the theme to Millennium's
 `quickcss.css`, enables the plugin, and sets up the screen-share daemon as a
-service (systemd `--user` on Linux, a logon Scheduled Task on Windows).
+service (systemd `--user` on Linux, a logon Scheduled Task on Windows). On Windows,
+install Python + ffmpeg first (`winget install Python.Python.3 Gyan.FFmpeg`).
 
 Then **fully restart Steam** (`steam -shutdown` then relaunch / Quit from the tray)
 and enable **Settings → Friends & Chat → "Dock chats to the friends list."**
