@@ -755,7 +755,16 @@
       }
       var main = win.querySelector(".ChatHistoryContainer");
       if (!main) { if (existing) existing.remove(); return; }
-      var incoming = !!native.querySelector(".inviteButtonJoinVoice");   // accept button = they're calling you
+      // incoming vs outgoing: the voice store's m_bInitiatedOneOnOneCall is true when WE
+      // started the call (outgoing -> show Cancel only). The native join button is present
+      // for outgoing too, so the old DOM check wrongly showed Accept/Decline to the caller.
+      var incoming;
+      try {
+        var st = window.g_FriendsUIApp && window.g_FriendsUIApp.m_VoiceChatStore
+                 && window.g_FriendsUIApp.m_VoiceChatStore.m_VoiceCallState;
+        if (st && typeof st.m_bInitiatedOneOnOneCall === "boolean") incoming = !st.m_bInitiatedOneOnOneCall;
+      } catch (e) {}
+      if (incoming === undefined) incoming = !!native.querySelector(".inviteButtonJoinVoice");
       // Read name + avatar straight from the native ring (always correct, unlike the chat title)
       var nameEl = native.querySelector(".nOdcT-MoOaXGePXLyPe0H, [class*=VoiceStatusLab]");
       var name = (nameEl ? nameEl.textContent : "").replace(/\s*would like[\s\S]*$/i, "").trim() || chatFriendName(doc) || "Friend";
@@ -778,7 +787,20 @@
           var b = native.querySelector(".inviteButtonJoinVoice"); if (b) b.click();   // proxy Steam's accept
         });
         dec.addEventListener("click", function () {
-          var b = native.querySelector(".inviteButtonDeclineVoice"); if (b) b.click();   // proxy Steam's decline
+          // Incoming: proxy Steam's decline button. Outgoing (cancel): that button may not
+          // exist, so fall back to the voice store's hang-up to actually kill the call.
+          var b = native.querySelector(".inviteButtonDeclineVoice");
+          if (b) { b.click(); }
+          else {
+            try {
+              var vcs = window.g_FriendsUIApp && window.g_FriendsUIApp.m_VoiceChatStore;
+              if (vcs) {
+                if (vcs.LeaveOneOnOneVoiceChat) vcs.LeaveOneOnOneVoiceChat();
+                else if (vcs.LeaveOneOnOneChat) vcs.LeaveOneOnOneChat();
+                else if (vcs.EndVoiceChat) vcs.EndVoiceChat();
+              }
+            } catch (e) {}
+          }
           ring.remove();
         });
         btns.appendChild(acc); btns.appendChild(dec);
@@ -796,33 +818,50 @@
   }
 
   // One-click to open/switch a chat. Steam opens a conversation on DOUBLE-click of a
-  // roster row; we want single-click (Discord-style). Rather than guess the chat-store
-  // API, we delegate one click listener per doc and synthesize the dblclick Steam itself
-  // handles — reusing its exact open logic. Idempotent per doc; ignores call-stage clones,
-  // the header tab (pointer-events:none anyway), and interactive children (context buttons).
+  // roster row; we want single-click (Discord-style). Synthetic events don't work (Steam
+  // ignores untrusted clicks), so we call Steam's real open API directly:
+  // g_FriendsUIApp.ShowFriendChatDialog(browserContext, accountId) — the same call the
+  // native row's double-click runs. The row's accountId is read from its React fiber.
+  function rowAccountId(node) {
+    try {
+      var key = Object.keys(node).find(function (k) {
+        return k.indexOf("__reactFiber$") === 0 || k.indexOf("__reactInternalInstance$") === 0;
+      });
+      var fib = key ? node[key] : null;
+      for (var hops = 0; fib && hops < 40; hops++, fib = fib.return) {
+        var p = fib.memoizedProps;
+        if (!p) continue;
+        var cands = [p, p.friend, p.persona, p.user, p.friendAndPlaytime && p.friendAndPlaytime.friend];
+        for (var i = 0; i < cands.length; i++) {
+          var c = cands[i]; if (!c) continue;
+          if (typeof c.accountid === "number") return c.accountid;
+          if (typeof c.m_unAccountID === "number") return c.m_unAccountID;
+          if (c.persona && typeof c.persona.accountid === "number") return c.persona.accountid;
+          var sid = c.m_steamid || (c.persona && c.persona.m_steamid);
+          if (sid && sid.GetAccountID) return sid.GetAccountID();
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
   function oneClickOpen(doc) {
     if (doc.__ds_oneclick) return;
     doc.__ds_oneclick = true;
-    var win = doc.defaultView || window;
     doc.addEventListener("click", function (e) {
       try {
         var t = e.target;
         if (!t || !t.closest) return;
         if (t.closest("button, [role=button], a, input, .contextMenuButton")) return;
-        var row = t.closest(".friendlistListContainer .friend, .ChatRoomListGroupItem");
+        var row = t.closest(".friendlistListContainer .friend");
         if (!row || row.closest(".discordish-stage")) return;
-        if (row.__ds_dblbusy) return;                  // de-dupe: don't double-fire on a real dblclick
-        row.__ds_dblbusy = true;
-        win.setTimeout(function () { row.__ds_dblbusy = false; }, 300);
-        // Emulate the SECOND click of a real double-click: a click with detail:2 then a
-        // dblclick (also detail:2). Steam's open handler keys on the double — a plain
-        // dblclick with detail:0 (the previous attempt) didn't register. The detail:2
-        // click re-enters this listener but __ds_dblbusy short-circuits it (no recursion).
-        function fire(type) {
-          row.dispatchEvent(new win.MouseEvent(type, { bubbles: true, cancelable: true, view: win, detail: 2 }));
-        }
-        fire("click");
-        fire("dblclick");
+        var acct = rowAccountId(row);
+        var app = window.g_FriendsUIApp;
+        if (!acct || !app) return;
+        var ctx = (app.GetDefaultBrowserContext && app.GetDefaultBrowserContext())
+               || (app.UIStore && app.UIStore.GetDefaultBrowserContext && app.UIStore.GetDefaultBrowserContext());
+        if (app.ShowFriendChatDialog) app.ShowFriendChatDialog(ctx, acct, true, true);
+        else if (app.UIStore && app.UIStore.ShowFriendChatDialog) app.UIStore.ShowFriendChatDialog(ctx, acct, true, true);
       } catch (err) {}
     }, false);
   }
@@ -865,7 +904,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 41;
+  var VERSION = 42;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
