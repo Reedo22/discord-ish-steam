@@ -356,12 +356,14 @@
 .chatTabList .Yd-DsWkYiFiYwpci--Yk_ [title="Close this tab"] { display: none !important; }
 
 /* show the FULL conversation name — Steam sizes tabs narrow (~17 chars then ellipsis)
-   because they were meant to sit in a row; as our single header it should fit the name. */
+   because they were meant to sit in a row; as our single header it should fit the name.
+   The name node is a hashed class that differs from the friends-list one, so reset the
+   width/overflow caps on EVERY text descendant of the active tab (excluding the avatar,
+   whose holder must keep clipping for the circular crop). */
 .chatTabList .Yd-DsWkYiFiYwpci--Yk_ { max-width: none !important; width: auto !important; }
-.chatTabList .Yd-DsWkYiFiYwpci--Yk_ .labelHolder,
-.chatTabList .Yd-DsWkYiFiYwpci--Yk_ .nOdcT-MoOaXGePXLyPe0H,
-.chatTabList .Yd-DsWkYiFiYwpci--Yk_ .playerName {
+.chatTabList .Yd-DsWkYiFiYwpci--Yk_ *:not(.avatarHolder):not(.avatar):not(.avatarStatus) {
   max-width: none !important;
+  min-width: 0 !important;
   overflow: visible !important;
   text-overflow: clip !important;
   white-space: nowrap !important;
