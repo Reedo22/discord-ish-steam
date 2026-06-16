@@ -771,6 +771,20 @@
       var avatar = "";
       var imgs = native.querySelectorAll("img");
       for (var ii = 0; ii < imgs.length; ii++) { if (imgs[ii].src && imgs[ii].src.indexOf("data:") !== 0) { avatar = imgs[ii].src.replace("_medium", "_full"); break; } }
+      if (!avatar) {   // native ring carries no <img> — resolve the avatar from the friend store via the call's target accountID
+        try {
+          var tAcct = st && st.m_targetAccountID;
+          var fs = window.g_FriendsUIApp && window.g_FriendsUIApp.m_FriendStore;
+          var fr = (fs && tAcct && fs.GetFriend) ? fs.GetFriend(tAcct) : null;
+          if (!fr && fs && tAcct) fr = fs.all_friends.find(function (x) {
+            var p = x.m_persona || {};
+            return p.m_unAccountID === tAcct || p.accountid === tAcct ||
+                   (p.m_steamid && p.m_steamid.GetAccountID && p.m_steamid.GetAccountID() === tAcct);
+          });
+          var per = fr && fr.m_persona;
+          if (per) avatar = per.avatar_url_full || per.avatar_url_medium || avatar;
+        } catch (e) {}
+      }
       native.classList.add("ds-native-hidden");         // hide Steam's menu (kept clickable for proxy)
       var ring = main.querySelector(".ds-ring");
       if (existing && existing !== ring) existing.remove();
@@ -904,7 +918,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 42;
+  var VERSION = 43;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {

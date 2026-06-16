@@ -33,7 +33,13 @@ git clone https://github.com/Reedo22/discord-ish-steam ~/discord-ish-steam
 cd ~/discord-ish-steam && ./install.sh
 ```
 
-**Windows** (PowerShell)
+**Windows — all-in-one** (PowerShell): from a base Steam install to the finished reskin.
+Installs prerequisites (git, Python, ffmpeg), Millennium, then the plugin + daemon:
+```powershell
+irm https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/install-all.ps1 | iex
+```
+
+**Windows — plugin only** (if Millennium is already installed):
 ```powershell
 irm https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/install.ps1 | iex
 ```
