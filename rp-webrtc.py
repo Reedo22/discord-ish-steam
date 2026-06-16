@@ -17,7 +17,7 @@
 #   GET /ping                  -> {ok:true, running:bool}
 #
 # MediaMTX is started on demand from ./bin/mediamtx with ./bin/rp-mediamtx.yml.
-import os, sys, json, socket, subprocess, threading, signal, shutil, time, re
+import os, sys, json, socket, subprocess, threading, signal, shutil, time, re, tempfile
 import urllib.request, urllib.error
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -42,6 +42,93 @@ TUNNEL = os.environ.get("DS_TUNNEL", "auto").lower()
 
 state = {"ff": None, "mtx": None, "geom": None, "cf": None, "cf_url": None}
 lock = threading.Lock()
+
+
+# --- Cloudflare TURN (NAT traversal for off-LAN viewers) -----------------------------
+# Direct P2P with STUN alone fails on symmetric/CGNAT, so media never reaches a remote
+# viewer (a connected-but-black tile). A TURN relay fixes it: when no direct path works,
+# both ends relay the (DTLS-encrypted) media through Cloudflare. We mint SHORT-LIVED ICE
+# credentials from a Cloudflare "TURN key" (free, ~1TB/mo); the relay can't decrypt the
+# media. The key lives in a LOCAL secrets file or env vars and is never committed:
+#   ~/.config/discordish/turn.json  ->  {"key_id": "...", "token": "..."}
+#   or env:  DS_CF_TURN_KEY_ID, DS_CF_TURN_TOKEN
+def _turn_secret():
+    kid = os.environ.get("DS_CF_TURN_KEY_ID")
+    tok = os.environ.get("DS_CF_TURN_TOKEN")
+    if kid and tok:
+        return kid, tok
+    try:
+        with open(os.path.join(os.path.expanduser("~"), ".config", "discordish", "turn.json")) as f:
+            d = json.load(f)
+        return d.get("key_id"), d.get("token")
+    except Exception:
+        return None, None
+
+
+_turn = {"ice": None, "exp": 0}   # cached ICE servers + epoch expiry
+_STUN_ONLY = [{"urls": "stun:stun.l.google.com:19302"}]
+
+
+def turn_ice(ttl=86400):
+    """ICE servers (STUN + Cloudflare TURN) as RTCIceServer dicts, cached until ~10 min
+    before expiry. Falls back to plain STUN if no key is set or minting fails (LAN still
+    works; a remote viewer behind a hard NAT may not)."""
+    now = time.time()
+    if _turn["ice"] and now < _turn["exp"] - 600:
+        return _turn["ice"]
+    kid, tok = _turn_secret()
+    if not kid or not tok:
+        _turn["ice"] = _STUN_ONLY; _turn["exp"] = now + ttl
+        return _STUN_ONLY
+    try:
+        url = "https://rtc.live.cloudflare.com/v1/turn/keys/%s/credentials/generate" % kid
+        req = urllib.request.Request(
+            url, data=json.dumps({"ttl": ttl}).encode(),
+            headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            j = json.load(r)
+        ice = j.get("iceServers")
+        servers = ice if isinstance(ice, list) else [ice]   # CF returns one object; normalize
+        _turn["ice"] = servers; _turn["exp"] = now + ttl
+        sys.stderr.write("[turn] minted Cloudflare ICE credentials (ttl %ds)\n" % ttl)
+        return servers
+    except Exception as e:
+        sys.stderr.write("[turn] mint failed (%s); falling back to STUN-only\n" % e)
+        _turn["ice"] = _STUN_ONLY; _turn["exp"] = now + 300   # retry sooner
+        return _STUN_ONLY
+
+
+def _mtx_config_path():
+    """Write a MediaMTX config = the template with its webrtcICEServers2 block replaced by
+    the current ICE servers (so MediaMTX gathers TURN relay candidates too). Returns the
+    path MediaMTX should load; falls back to the static template on any error."""
+    try:
+        with open(MTX_CFG) as f:
+            base = f.read()
+    except Exception:
+        return MTX_CFG
+    lines = ["webrtcICEServers2:"]
+    for s in turn_ice():
+        if not isinstance(s, dict):
+            continue
+        urls = s.get("urls")
+        if isinstance(urls, str):
+            urls = [urls]
+        for u in (urls or []):
+            lines.append("  - url: %s" % u)
+            if s.get("username") is not None:
+                lines.append("    username: %s" % json.dumps(s.get("username")))
+                lines.append("    password: %s" % json.dumps(s.get("credential") or ""))
+    # drop the template's static webrtcICEServers2 block, then append the generated one
+    base = re.sub(r"(?ms)^webrtcICEServers2:.*?(?=^\S|\Z)", "", base)
+    gen = base.rstrip() + "\n\n" + "\n".join(lines) + "\n"
+    try:
+        out = os.path.join(tempfile.gettempdir(), "rp-mediamtx-gen.yml")
+        with open(out, "w") as f:
+            f.write(gen)
+        return out
+    except Exception:
+        return MTX_CFG
 
 
 # --- cross-platform process helpers --------------------------------------------------
@@ -302,7 +389,7 @@ def ensure_mediamtx():
     pip = public_ip()
     if pip:
         env["MTX_WEBRTCADDITIONALHOSTS"] = pip
-    state["mtx"] = _spawn([MEDIAMTX, MTX_CFG], stdout=subprocess.DEVNULL,
+    state["mtx"] = _spawn([MEDIAMTX, _mtx_config_path()], stdout=subprocess.DEVNULL,
                           stderr=subprocess.DEVNULL, env=env)
     # poll the RTSP port instead of a fixed 1.5s sleep — return the moment it's listening
     for _ in range(40):                       # up to ~4s
@@ -449,14 +536,16 @@ class H(BaseHTTPRequestHandler):
             tun = None if q.get("local", ["0"])[0] == "1" else ensure_tunnel()
             out_whep = (tun + "/screen/whep") if tun else lan_whep
             self._send({"ok": ok, "whep": out_whep, "lan_whep": lan_whep, "tunnel": bool(tun),
-                        "path": "screen", "geom": geom, "encoder": pick_encoder()[0]})
+                        "path": "screen", "geom": geom, "encoder": pick_encoder()[0],
+                        "ice": turn_ice()})
         elif u.path == "/stop":
             # stop the capture but KEEP the tunnel warm for the next share (instant restart)
             with lock: stop_capture()
             self._send({"ok": True})
         elif u.path == "/url":
             tun = state.get("cf_url")
-            self._send({"whep": (tun + "/screen/whep") if tun else lan_whep, "lan_ip": ip, "tunnel": bool(tun)})
+            self._send({"whep": (tun + "/screen/whep") if tun else lan_whep, "lan_ip": ip,
+                        "tunnel": bool(tun), "ice": turn_ice()})
         elif u.path == "/ping":
             self._send({"ok": True, "running": bool(state.get("ff") and state["ff"].poll() is None)})
         else:

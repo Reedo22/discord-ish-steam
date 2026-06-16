@@ -184,6 +184,7 @@
       .then(function (r) { return r.json(); })
       .then(function (j) {
         window.__ds_share_url = j && j.whep;                 // LAN/public url for the viewer
+        window.__ds_share_ice = (j && j.ice) || null;        // TURN/STUN servers for the viewer
         window.__ds_share_local = "http://127.0.0.1:8889/screen/whep";   // loopback for self-preview
         window.__ds_share_info = j; return j;
       })
@@ -201,7 +202,11 @@
     if (tries == null) tries = 12;          // the stream can take a couple seconds to go
     try {                                    // live (esp. per-app gst pipe) — keep retrying
       if (v.__pc) { try { v.__pc.close(); } catch (e) {} }
-      var pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+      // Use the ICE servers the host sent (Cloudflare TURN relay enables off-LAN viewers
+      // behind hard NATs); fall back to plain STUN for LAN / older hosts.
+      var iceServers = (window.__ds_view_ice && window.__ds_view_ice.length)
+        ? window.__ds_view_ice : [{ urls: "stun:stun.l.google.com:19302" }];
+      var pc = new RTCPeerConnection({ iceServers: iceServers });
       v.__pc = pc;
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.ontrack = function (e) { v.srcObject = e.streams[0]; if (v.play) v.play().catch(function () {}); };
@@ -488,7 +493,7 @@
         wStopShare(); setTimeout(srefresh, 60);
       } else {
         wStartShare(window.__ds_share_geom).then(function () {
-          if (window.__ds_share_url) { try { sendSignal(doc, window.__ds_share_url); } catch (e) {} }  // auto-signal the viewer
+          if (window.__ds_share_url) { try { sendSignal(doc, sigPayload(window.__ds_share_url, window.__ds_share_ice)); } catch (e) {} }  // auto-signal the viewer (url + ICE)
           srefresh();
         });
       }
@@ -689,6 +694,19 @@
   // connects with no pasting. We hide these marker messages from the chat history.
   var SIG = "ds-screenshare::";
   window.__ds_sig_seen = window.__ds_sig_seen || {};   // per-friend last-processed ordinal
+  // Payload = "<whep-url>" optionally followed by "|ice=<base64(JSON iceServers)>" so the
+  // viewer gets the host's Cloudflare TURN credentials (needed to relay across NATs).
+  function sigPayload(url, ice) {
+    if (!ice || !ice.length) return url;
+    try { return url + "|ice=" + btoa(JSON.stringify(ice)); } catch (e) { return url; }
+  }
+  function parseSignal(payload) {
+    var i = payload.indexOf("|ice=");
+    if (i < 0) return { url: payload, ice: null };
+    var ice = null;
+    try { ice = JSON.parse(atob(payload.slice(i + 5))); } catch (e) {}
+    return { url: payload.slice(0, i), ice: ice };
+  }
   function friendAcctForDoc(doc) {
     try {
       var name = chatFriendName(doc).toLowerCase();
@@ -721,7 +739,8 @@
           if ((window.__ds_sig_seen[f.m_unAccountID] || 0) >= ord) break;   // already handled
           window.__ds_sig_seen[f.m_unAccountID] = ord;
           var payload = m.strMessageInternal.slice(SIG.length);
-          window.__ds_view_url = (payload === "stop") ? null : payload;
+          if (payload === "stop") { window.__ds_view_url = null; window.__ds_view_ice = null; }
+          else { var p = parseSignal(payload); window.__ds_view_url = p.url; window.__ds_view_ice = p.ice; }
           break;
         }
       });
@@ -920,7 +939,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 44;
+  var VERSION = 45;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
