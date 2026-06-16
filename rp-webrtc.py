@@ -33,6 +33,7 @@ CLOUDFLARED = os.path.join(BIN, "cloudflared" + EXE)
 PORT = 48592                 # control API (was 48591 for the old capture server)
 RTSP = "rtsp://127.0.0.1:8554/screen"
 WHEP_PORT = 8889
+MEDIA_PORT = 48890           # public-facing (tunneled): WS fMP4 + WHEP proxy. NOT the control API.
 DISPLAY = os.environ.get("DISPLAY", ":1")   # Linux/X11 only; ignored on Windows
 BITRATE = os.environ.get("DS_BITRATE", "6M")   # 1440p-friendly default; presets come in Phase 3
 FPS = os.environ.get("DS_FPS", "30")
@@ -762,6 +763,89 @@ class H(BaseHTTPRequestHandler):
         self.end_headers(); self.wfile.write(ans)
 
 
+from http.server import ThreadingHTTPServer
+
+
+class MediaH(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def _proxy_whep(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
+        try:
+            req = urllib.request.Request("http://127.0.0.1:8889" + self.path, data=body,
+                                         method=self.command,
+                                         headers={"Content-Type": self.headers.get("Content-Type", "application/sdp")})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                ans = r.read(); code = r.status; ctype = r.headers.get("Content-Type", "application/sdp")
+        except urllib.error.HTTPError as e:
+            ans = e.read(); code = e.code; ctype = "text/plain"
+        except Exception as e:
+            ans = str(e).encode(); code = 502; ctype = "text/plain"
+        self.send_response(code)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(ans)))
+        self.end_headers()
+        try:
+            self.wfile.write(ans)
+        except Exception:
+            pass
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def do_POST(self):
+        if "/whep" in self.path:
+            self._proxy_whep()
+        else:
+            self.send_response(404); self.end_headers()
+
+    def do_GET(self):
+        if self.path.startswith("/screen/ws"):
+            key = self.headers.get("Sec-WebSocket-Key")
+            if not key:
+                self.send_response(400); self.end_headers(); return
+            self.send_response(101)
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", _ws_accept(key))
+            self.end_headers()
+            sock = self.connection
+            with ws_lock:
+                seg = fmp4_init["seg"]
+            if seg:
+                try:
+                    sock.sendall(_ws_frame(seg))
+                except Exception:
+                    return
+            with ws_lock:
+                ws_clients.add(sock)
+            try:
+                while True:
+                    if not sock.recv(4096):
+                        break
+            except Exception:
+                pass
+            finally:
+                with ws_lock:
+                    ws_clients.discard(sock)
+            return
+        if "/whep" in self.path:
+            self._proxy_whep(); return
+        self.send_response(404); self.end_headers()
+
+
+def start_media_server():
+    srv = ThreadingHTTPServer(("0.0.0.0", MEDIA_PORT), MediaH)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
 def main():
     srv = HTTPServer(("127.0.0.1", PORT), H)
     def shutdown(*a):
@@ -780,6 +864,7 @@ def main():
             try: ensure_tunnel()
             except Exception: pass
     threading.Thread(target=prewarm, daemon=True).start()
+    start_media_server()
     srv.serve_forever()
 
 
