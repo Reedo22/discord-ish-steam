@@ -825,7 +825,7 @@
           var m = src && src.match(/var VERSION = (\d+)/);
           if (m && +m[1] > VERSION) {
             window.__DISCORDISH_BOOTED__ = false;            // let the newer copy boot itself
-            (0, eval)(src.replace(/export\s+default[\s\S]*$/, ""));
+            (0, eval)(src.replace(/^export\s+default[\s\S]*$/m, ""));
           } else { init(); }
         })
         .catch(function () { init(); });
