@@ -74,14 +74,18 @@ def _ws_frame(payload, opcode=0x2):          # 0x2 = binary, FIN set, unmasked (
 def ws_broadcast(data):
     frame = _ws_frame(data)
     with ws_lock:
-        dead = []
-        for c in ws_clients:
-            try:
-                c.sendall(frame)
-            except Exception:
-                dead.append(c)
+        clients = list(ws_clients)
+    dead = []
+    for c in clients:
+        try:
+            c.sendall(frame)
+        except Exception:
+            dead.append(c)
+    if dead:
+        with ws_lock:
+            for c in dead:
+                ws_clients.discard(c)
         for c in dead:
-            ws_clients.discard(c)
             try:
                 c.close()
             except Exception:
@@ -776,6 +780,8 @@ class MediaH(BaseHTTPRequestHandler):
         pass
 
     def _proxy_whep(self):
+        if not self.path.startswith("/screen/whep") or ".." in self.path:
+            self.send_response(404); self.end_headers(); return
         body = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
         try:
             req = urllib.request.Request("http://127.0.0.1:8889" + self.path, data=body,
@@ -805,7 +811,7 @@ class MediaH(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
-        if "/whep" in self.path:
+        if self.path.startswith("/screen/whep"):
             self._proxy_whep()
         else:
             self.send_response(404); self.end_headers()
@@ -821,6 +827,7 @@ class MediaH(BaseHTTPRequestHandler):
             self.send_header("Sec-WebSocket-Accept", _ws_accept(key))
             self.end_headers()
             sock = self.connection
+            sock.settimeout(15)
             with ws_lock:
                 seg = fmp4_init["seg"]
             if seg:
@@ -832,21 +839,25 @@ class MediaH(BaseHTTPRequestHandler):
                 ws_clients.add(sock)
             try:
                 while True:
-                    if not sock.recv(4096):
+                    try:
+                        if not sock.recv(4096):
+                            break
+                    except socket.timeout:
+                        continue
+                    except Exception:
                         break
-            except Exception:
-                pass
             finally:
                 with ws_lock:
                     ws_clients.discard(sock)
             return
-        if "/whep" in self.path:
+        if self.path.startswith("/screen/whep"):
             self._proxy_whep(); return
         self.send_response(404); self.end_headers()
 
 
 def start_media_server():
     srv = ThreadingHTTPServer(("0.0.0.0", MEDIA_PORT), MediaH)
+    srv.daemon_threads = True
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 
