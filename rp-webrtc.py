@@ -68,6 +68,33 @@ def _ffmpeg_encoders():
         return ""
 
 
+def _kbps():
+    b = BITRATE.strip().lower()
+    if b.endswith("m"): return int(float(b[:-1]) * 1000)
+    if b.endswith("k"): return int(float(b[:-1]))
+    try: return int(int(b) / 1000)
+    except Exception: return 12000
+
+
+def pick_gst_encoder():
+    """Encoder fragment for gstreamer window capture (occlusion-proof, via ximagesrc xid).
+    Mirrors pick_encoder() priority but in GStreamer element syntax."""
+    try:
+        insp = subprocess.run(["gst-inspect-1.0"], capture_output=True, text=True).stdout
+    except Exception:
+        insp = ""
+    kb = _kbps()
+    if "nvh264enc" in insp:
+        return ("nvh264enc", "videoconvert ! video/x-raw,format=NV12 ! "
+                "nvh264enc preset=low-latency-hq bitrate=%d gop-size=30 rc-mode=cbr" % kb)
+    if "vah264enc" in insp:
+        return ("vah264enc", "videoconvert ! vah264enc bitrate=%d key-int-max=30" % kb)
+    if "x264enc" in insp:
+        return ("x264enc", "videoconvert ! video/x-raw,format=I420 ! "
+                "x264enc tune=zerolatency speed-preset=veryfast bitrate=%d key-int-max=30" % kb)
+    return (None, None)
+
+
 def pick_encoder():
     """Return (name, in_args, enc_args) auto-detecting the best available H.264 encoder.
     Viewers only decode H.264, so we always emit H.264."""
@@ -210,12 +237,28 @@ def stop_capture():
     state["ff"] = None
 
 
-def start_capture(geom):
+def start_capture(geom=None, win=None):
     with lock:
         stop_capture()
         ensure_mediamtx()
-        # geom = WxH+X+Y -> ffmpeg -video_size WxH -i :D+X,Y
-        m = re.match(r"(\d+)x(\d+)\+(\d+)\+(\d+)", geom)
+        env = {**os.environ, "DISPLAY": DISPLAY}
+        if win:
+            # Occlusion-proof single-window capture: grab the window's own buffer by XID
+            # (gstreamer ximagesrc xid), GPU-encode, pipe h264/mpegts to ffmpeg -> RTSP.
+            gname, genc = pick_gst_encoder()
+            if not genc:
+                return False
+            xid = win if str(win).startswith("0x") else "0x%x" % int(win)
+            pipe = ("gst-launch-1.0 -q ximagesrc xid=%s use-damage=false ! %s ! "
+                    "h264parse ! mpegtsmux ! fdsink fd=1 2>/dev/null | "
+                    "ffmpeg -hide_banner -loglevel warning -i - -c copy "
+                    "-f rtsp -rtsp_transport tcp %s") % (xid, genc, RTSP)
+            state["ff"] = subprocess.Popen(["bash", "-c", pipe], stdout=subprocess.DEVNULL,
+                                           stderr=subprocess.DEVNULL, start_new_session=True, env=env)
+            state["geom"] = "win:" + xid
+            return True
+        # geom = WxH+X+Y -> ffmpeg -video_size WxH -i :D+X,Y (whole monitor / region)
+        m = re.match(r"(\d+)x(\d+)\+(\d+)\+(\d+)", geom or "")
         if not m:
             return False
         w, h, x, y = m.groups()
@@ -226,8 +269,7 @@ def start_capture(geom):
                + in_args + enc_args
                + ["-f", "rtsp", "-rtsp_transport", "tcp", RTSP])
         state["ff"] = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                                       stderr=subprocess.DEVNULL, start_new_session=True,
-                                       env={**os.environ, "DISPLAY": DISPLAY})
+                                       stderr=subprocess.DEVNULL, start_new_session=True, env=env)
         state["geom"] = geom
         return True
 
@@ -252,10 +294,11 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/sources":
             self._send({"monitors": monitors(), "windows": windows(), "encoder": pick_encoder()[0]})
         elif u.path == "/start":
+            win = q.get("win", [None])[0]
             geom = q.get("geom", [None])[0]
-            if not geom:
+            if not win and not geom:
                 mons = monitors(); geom = (next((m for m in mons if m["primary"]), mons[0])["geom"] if mons else "1920x1080+0+0")
-            ok = start_capture(geom)
+            ok = start_capture(geom=geom, win=win)
             # local=1 -> skip the tunnel (LAN-only, faster). default -> public https tunnel.
             tun = None if q.get("local", ["0"])[0] == "1" else ensure_tunnel()
             out_whep = (tun + "/screen/whep") if tun else lan_whep

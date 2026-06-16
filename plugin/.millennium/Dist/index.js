@@ -174,9 +174,12 @@
   // WHEP client -> <video> in the call tile. URL hand-off between peers is signaled out
   // of band (test: passed in; later: Steam chat / a share link).
   var WCTL = "http://127.0.0.1:48592";          // local daemon control API
-  function wStartShare(geom) {
+  function wStartShare(src) {
     window.__ds_share_mode = "webrtc";
-    var qs = geom ? ("?geom=" + encodeURIComponent(geom)) : "";
+    // src = "win:0x.." (per-app, occlusion-proof) | "geom:WxH+X+Y" or bare "WxH+X+Y" (monitor)
+    var qs = "";
+    if (src && src.indexOf("win:") === 0) qs = "?win=" + encodeURIComponent(src.slice(4));
+    else if (src) qs = "?geom=" + encodeURIComponent(src.indexOf("geom:") === 0 ? src.slice(5) : src);
     return fetch(WCTL + "/start" + qs, { cache: "no-store" })
       .then(function (r) { return r.json(); })
       .then(function (j) {
@@ -407,8 +410,9 @@
     shareB.title = "Screen share"; shareB.textContent = "🖥";
     var spop = el(doc, "div", "ds-voice-settings"); spop.style.display = "none";
     var stitle = el(doc, "div", "ds-vs-title"); stitle.textContent = "Screen share"; spop.appendChild(stitle);
-    // source picker: a monitor OR a specific app window (per-app share). Both are just a
-    // screen region the daemon captures via x11grab — pick one; it goes into __ds_share_geom.
+    // source picker: a monitor OR a specific app window (per-app share). Monitors capture a
+    // screen region (x11grab); windows capture the window's own buffer by XID (gstreamer,
+    // occlusion-proof). The selected token "geom:WxH+X+Y" or "win:0x.." goes into __ds_share_geom.
     var ssrcRow = el(doc, "div", "ds-vs-row");
     var ssrcLbl = el(doc, "span", "ds-vs-label"); ssrcLbl.textContent = "Source";
     var ssrc = el(doc, "select", "ds-vs-select");
@@ -418,11 +422,11 @@
       fetch(WCTL + "/sources", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
         ssrc.textContent = "";
         (j.monitors || []).forEach(function (m, i) {
-          var o = doc.createElement("option"); o.value = m.geom;
+          var o = doc.createElement("option"); o.value = "geom:" + m.geom;
           o.textContent = "Monitor " + (i + 1) + (m.primary ? " ★" : "") + " (" + m.name + ")"; ssrc.appendChild(o);
         });
         (j.windows || []).forEach(function (wn) {
-          var o = doc.createElement("option"); o.value = wn.geom;
+          var o = doc.createElement("option"); o.value = "win:" + wn.id;
           o.textContent = "🪟 " + (wn.title.length > 32 ? wn.title.slice(0, 32) + "…" : wn.title); ssrc.appendChild(o);
         });
         if (window.__ds_share_geom) ssrc.value = window.__ds_share_geom;
@@ -809,7 +813,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 34;
+  var VERSION = 35;
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
     window.__DISCORDISH_BOOTED__ = true;

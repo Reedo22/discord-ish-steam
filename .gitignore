@@ -8,3 +8,5 @@ bin/mediamtx.yml
 bin/LICENSE
 bin/auto.crt
 bin/auto.key
+auto.crt
+auto.key
