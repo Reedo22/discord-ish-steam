@@ -801,9 +801,13 @@
         window.__ds_rpt_reg = window.SteamClient.RemotePlay.RegisterForGroupCreated(function (groupId) { window.__ds_rpt_groupid = groupId; });
       }
     } catch (e) {}
+    // Idempotent intervals: clear any from a prior init() (e.g. a live re-inject) so
+    // tick loops never stack — duplicate loops race over share/signal state and break it.
+    try { (window.__ds_intervals || []).forEach(clearInterval); } catch (e) {}
+    window.__ds_intervals = [];
     fetchCSS();                                 // refresh CSS from the repo on boot
-    setInterval(fetchCSS, 6 * 60 * 60 * 1000);  // and periodically during long sessions
-    setInterval(tick, 150);                     // snappier mute/deafen + speaking updates
+    window.__ds_intervals.push(setInterval(fetchCSS, 6 * 60 * 60 * 1000));  // periodic during long sessions
+    window.__ds_intervals.push(setInterval(tick, 150));                     // snappier mute/deafen + speaking
     tick();
   }
 
@@ -813,7 +817,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the ES
   // `export default` first — eval rejects module syntax). init() runs only after this
   // resolves, so we never double-initialise; falls back to bundled code if offline.
-  var VERSION = 35;
+  var VERSION = 36;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
