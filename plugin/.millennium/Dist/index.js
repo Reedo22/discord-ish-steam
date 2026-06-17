@@ -174,12 +174,23 @@
   // WHEP client -> <video> in the call tile. URL hand-off between peers is signaled out
   // of band (test: passed in; later: Steam chat / a share link).
   var WCTL = "http://127.0.0.1:48592";          // local daemon control API
+  // share encode prefs (resolution/bitrate dropdowns), persisted across sessions
+  window.__ds_share_opts = window.__ds_share_opts || (function () {
+    var d = { h: "1080", br: "3M" };   // remote-safe default; pick "Auto" for native 4K on LAN
+    try { var s = JSON.parse(localStorage.getItem("ds_share_opts")); if (s) { d.h = s.h || d.h; d.br = s.br || d.br; } } catch (e) {}
+    return d;
+  })();
   function wStartShare(src) {
     window.__ds_share_mode = "webrtc";
     // src = "win:0x.." (per-app, occlusion-proof) | "geom:WxH+X+Y" or bare "WxH+X+Y" (monitor)
-    var qs = "";
-    if (src && src.indexOf("win:") === 0) qs = "?win=" + encodeURIComponent(src.slice(4));
-    else if (src) qs = "?geom=" + encodeURIComponent(src.indexOf("geom:") === 0 ? src.slice(5) : src);
+    var params = [];
+    if (src && src.indexOf("win:") === 0) params.push("win=" + encodeURIComponent(src.slice(4)));
+    else if (src) params.push("geom=" + encodeURIComponent(src.indexOf("geom:") === 0 ? src.slice(5) : src));
+    // resolution/bitrate from the share-panel dropdowns (live encode overrides)
+    var o = window.__ds_share_opts || {};
+    params.push("h=" + encodeURIComponent(o.h && o.h !== "auto" ? o.h : "auto"));
+    if (o.br) params.push("br=" + encodeURIComponent(o.br));
+    var qs = params.length ? "?" + params.join("&") : "";
     return fetch(WCTL + "/start" + qs, { cache: "no-store" })
       .then(function (r) { return r.json(); })
       .then(function (j) {
@@ -330,6 +341,15 @@
           if (v.paused && v.play) v.play().catch(function () {});
         };
         ws.onerror = function (e) { console.warn("[ds] ws err", e); };
+        ws.onclose = function () {
+          if (v.__ws !== ws) return;                 // superseded by a newer connection
+          v.__ws = null;
+          // the capture may have just restarted (live resolution/bitrate change) — reconnect
+          // to the same stream. Guard on __ds_view_ws so an intentional stop doesn't loop.
+          if (window.__ds_view_ws) setTimeout(function () {
+            if (window.__ds_view_ws && !v.__ws) wConnectWsMse(window.__ds_view_ws, v);
+          }, 600);
+        };
       });
     } catch (e) { console.warn("[ds] wConnectWsMse", e); }
   }
@@ -556,15 +576,27 @@
     var sprev = el(doc, "video"); sprev.className = "ds-share-preview";
     sprev.autoplay = true; sprev.muted = true; sprev.playsInline = true; sprev.style.display = "none";
     spop.appendChild(sprev);
-    // quality preset (best-effort — Steam exposes SetClientStreamingQuality)
-    var qrow = el(doc, "div", "ds-vs-row");
-    var qlbl = el(doc, "span", "ds-vs-label"); qlbl.textContent = "Quality";
-    var qsel = el(doc, "select", "ds-vs-select");
-    [["Automatic", 0], ["Fast", 1], ["Balanced", 2], ["Beautiful", 3]].forEach(function (o) {
-      var op = doc.createElement("option"); op.value = o[1]; op.textContent = o[0]; qsel.appendChild(op);
-    });
-    qsel.addEventListener("change", function () { try { var R = rpRaw(); if (R && R.SetClientStreamingQuality) R.SetClientStreamingQuality(+qsel.value); } catch (e) {} });
-    qrow.appendChild(qlbl); qrow.appendChild(qsel); spop.appendChild(qrow);
+    // Resolution + bitrate: these drive OUR daemon encode (via /start?h=&br=). Changing one
+    // mid-share re-calls /start (the daemon restarts ffmpeg with the new params, ~1s); the
+    // viewer's WS auto-reconnects, so it applies live with NO Steam restart.
+    var opts = window.__ds_share_opts;
+    var addShareSel = function (label, key, items) {
+      var row = el(doc, "div", "ds-vs-row");
+      var lb = el(doc, "span", "ds-vs-label"); lb.textContent = label;
+      var sel = el(doc, "select", "ds-vs-select");
+      items.forEach(function (it) { var op = doc.createElement("option"); op.value = it[1]; op.textContent = it[0]; sel.appendChild(op); });
+      sel.value = opts[key];
+      sel.addEventListener("change", function () {
+        opts[key] = sel.value;
+        try { localStorage.setItem("ds_share_opts", JSON.stringify(opts)); } catch (e) {}
+        if (window.__ds_share_mode === "webrtc") {     // apply live: restart capture, bounce self-preview
+          wStartShare(window.__ds_share_geom).then(function () { if (sprev) sprev.dataset.live = ""; });
+        }
+      });
+      row.appendChild(lb); row.appendChild(sel); spop.appendChild(row);
+    };
+    addShareSel("Resolution", "h", [["Auto", "auto"], ["1080p", "1080"], ["720p", "720"], ["480p", "480"]]);
+    addShareSel("Bitrate", "br", [["Smooth (1.5M)", "1.5M"], ["Balanced (3M)", "3M"], ["Sharp (6M)", "6M"]]);
     var sgo = el(doc, "button", "ds-stream-go"); spop.appendChild(sgo);
     var srefresh = function () {
       var sharing = window.__ds_share_mode === "webrtc";
@@ -1053,7 +1085,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 48;
+  var VERSION = 49;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {

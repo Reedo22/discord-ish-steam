@@ -35,8 +35,9 @@ RTSP = "rtsp://127.0.0.1:8554/screen"
 WHEP_PORT = 8889
 MEDIA_PORT = 48890           # public-facing (tunneled): WS fMP4 + WHEP proxy. NOT the control API.
 DISPLAY = os.environ.get("DISPLAY", ":1")   # Linux/X11 only; ignored on Windows
-BITRATE = os.environ.get("DS_BITRATE", "6M")   # 1440p-friendly default; presets come in Phase 3
+BITRATE = os.environ.get("DS_BITRATE", "6M")   # default; per-share override via /start?br=
 FPS = os.environ.get("DS_FPS", "30")
+MAX_H = os.environ.get("DS_MAX_H", "").strip()  # encode height cap; "" = native. /start?h= overrides live.
 # Tunnel mode: "auto" = pre-warm a cloudflared tunnel at boot + keep it warm (fast first
 # share, works off-LAN). "off" = never tunnel (LAN-only; fastest, no public endpoint).
 TUNNEL = os.environ.get("DS_TUNNEL", "auto").lower()
@@ -373,7 +374,7 @@ def _apply_scale(in_args):
     """If DS_MAX_H is set (e.g. 1080), inject a CPU scale into the -vf chain to downscale
     to that height (width auto, kept even). Lowers bitrate pressure on the tunnel/VPN and
     shaves encode/decode time. Default (unset) = native resolution."""
-    h = os.environ.get("DS_MAX_H", "").strip()
+    h = MAX_H
     if not h.isdigit():
         return in_args
     sc = "scale=-2:%s" % h
@@ -727,6 +728,16 @@ class H(BaseHTTPRequestHandler):
             geom = q.get("geom", [None])[0]
             if not win and not geom:
                 mons = monitors(); geom = (next((m for m in mons if m["primary"]), mons[0])["geom"] if mons else "1920x1080+0+0")
+            # live encode overrides (UI dropdowns) — set before (re)starting the capture.
+            global BITRATE, MAX_H
+            br = (q.get("br", [None])[0] or "").strip()
+            if re.match(r"^\d+(\.\d+)?[MmKk]?$", br):
+                BITRATE = br
+            hh = (q.get("h", [None])[0] or "").strip().lower()
+            if hh.isdigit():
+                MAX_H = hh
+            elif hh in ("auto", "native", "0"):
+                MAX_H = ""
             ok = start_capture(geom=geom, win=win)
             # local=1 -> skip the tunnel (LAN-only, faster). default -> public https tunnel.
             tun = None if q.get("local", ["0"])[0] == "1" else ensure_tunnel()
@@ -736,7 +747,8 @@ class H(BaseHTTPRequestHandler):
             out_whep = (tun + "/screen/whep") if tun else ("http://%s:%d/screen/whep" % (ip, MEDIA_PORT))
             self._send({"ok": ok, "whep": out_whep, "ws": out_ws, "lan_whep": lan_whep,
                         "tunnel": bool(tun), "path": "screen", "geom": geom,
-                        "encoder": pick_encoder()[0], "ice": turn_ice()})
+                        "encoder": pick_encoder()[0], "ice": turn_ice(),
+                        "h": MAX_H or "auto", "br": BITRATE})
         elif u.path == "/stop":
             # stop the capture but KEEP the tunnel warm for the next share (instant restart)
             with lock: stop_capture()
