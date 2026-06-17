@@ -595,7 +595,7 @@
       });
       row.appendChild(lb); row.appendChild(sel); spop.appendChild(row);
     };
-    addShareSel("Resolution", "h", [["Auto", "auto"], ["1080p", "1080"], ["720p", "720"], ["480p", "480"]]);
+    addShareSel("Resolution", "h", [["Auto", "auto"], ["4K", "2160"], ["1440p", "1440"], ["1080p", "1080"], ["720p", "720"], ["480p", "480"]]);
     addShareSel("Bitrate", "br", [["Smooth (1.5M)", "1.5M"], ["Balanced (3M)", "3M"], ["Sharp (6M)", "6M"]]);
     var sgo = el(doc, "button", "ds-stream-go"); spop.appendChild(sgo);
     var srefresh = function () {
@@ -1085,7 +1085,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 49;
+  var VERSION = 50;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
