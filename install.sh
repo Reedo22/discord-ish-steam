@@ -20,9 +20,11 @@ fi
 
 # --- system dependencies (ffmpeg + gstreamer for capture, python3 for the daemon) ---
 install_deps() {
-  local apt=(ffmpeg python3 gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad wmctrl)
-  local dnf=(ffmpeg python3 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free wmctrl)
-  local pac=(ffmpeg python gst-plugins-base gst-plugins-good gst-plugins-bad wmctrl)
+# wmctrl lists windows, x11-xserver-utils provides xrandr (lists monitors) — BOTH required
+# for the source picker; without them the daemon can't enumerate monitors OR apps.
+  local apt=(ffmpeg python3 gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad wmctrl x11-xserver-utils)
+  local dnf=(ffmpeg python3 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free wmctrl xrandr)
+  local pac=(ffmpeg python gst-plugins-base gst-plugins-good gst-plugins-bad wmctrl xorg-xrandr)
   if   command -v apt-get >/dev/null 2>&1; then echo "Installing deps (apt, needs sudo)…"; sudo apt-get install -y "${apt[@]}" || echo "  ! apt install failed — install manually: ${apt[*]}" >&2
   elif command -v dnf     >/dev/null 2>&1; then echo "Installing deps (dnf, needs sudo)…"; sudo dnf install -y "${dnf[@]}" || echo "  ! dnf install failed" >&2
   elif command -v pacman  >/dev/null 2>&1; then echo "Installing deps (pacman, needs sudo)…"; sudo pacman -S --needed --noconfirm "${pac[@]}" || echo "  ! pacman install failed" >&2
@@ -95,6 +97,8 @@ fi
 ok=1
 command -v ffmpeg         >/dev/null 2>&1 || { echo "  ! ffmpeg still missing — screen-share capture won't work." >&2; ok=0; }
 command -v gst-launch-1.0 >/dev/null 2>&1 || echo "  ! gstreamer missing — per-window (occlusion-proof) capture won't work; monitor capture still will." >&2
+command -v xrandr         >/dev/null 2>&1 || { echo "  ! xrandr missing — daemon can't list MONITORS, so you can't start a share. Install: x11-xserver-utils" >&2; ok=0; }
+command -v wmctrl         >/dev/null 2>&1 || echo "  ! wmctrl missing — daemon can't list app WINDOWS (per-app share); monitor share still works." >&2
 [[ -x "$HERE/bin/mediamtx" ]] || { echo "  ! bin/mediamtx missing — screen share won't work." >&2; ok=0; }
 [[ $ok = 1 ]] && echo "Capture stack OK (ffmpeg + mediamtx present)."
 
