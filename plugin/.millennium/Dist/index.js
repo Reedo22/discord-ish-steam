@@ -211,9 +211,16 @@
       v.__pc = pc;
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.ontrack = function (e) {
+        if (v.__wsLive) return;   // WS fallback already rendering; don't let WebRTC hijack srcObject (it wins over src)
         v.srcObject = e.streams[0];
         if (v.__dsAutoTimer) { clearTimeout(v.__dsAutoTimer); v.__dsAutoTimer = null; }
         if (v.play) v.play().catch(function () {});
+      };
+      // Remote viewer with no TURN relay: ICE can't connect -> fall back to the WS tunnel
+      // immediately instead of waiting out the safety timer.
+      pc.oniceconnectionstatechange = function () {
+        var s = pc.iceConnectionState;
+        if ((s === "failed" || s === "disconnected") && v.__pc === pc && v.__dsGoWs) v.__dsGoWs();
       };
       // re-attempt while the source isn't producing yet; bail if a newer connect superseded us
       var retry = function (why) {
@@ -242,22 +249,34 @@
   }
   // exposed so the test harness (and later, chat-signaling) can start a viewer:
   window.__dsConnectShare = function (url) { window.__ds_view_url = url; };
-  // Try WebRTC; if no decodable video arrives within ~5s and we have a ws fallback url, switch.
+  // Try WebRTC (wins on LAN); the moment ICE fails or ~2.5s pass with no frame, switch to
+  // the WS/fMP4 tunnel. Remote viewers (no TURN) thus skip straight to WS, no black wait.
   function wConnectAuto(url, v) {
     if (v.__dsAutoTimer) { clearTimeout(v.__dsAutoTimer); v.__dsAutoTimer = null; }
     if (v.__ws) { try { v.__ws.close(); } catch (e) {} v.__ws = null; }   // drop a stale WS before reconnecting
-    wConnectShare(url, v);
+    v.__wsLive = false;
     var ws = window.__ds_view_ws;
+    // Single fallback into the WS/fMP4 tunnel path. Idempotent: fires on whichever of
+    // (WebRTC ICE failure) or (safety timer w/ no frame) happens first.
+    var goWs = function () {
+      if (v.__wentWs || !ws) return;
+      v.__wentWs = true;
+      if (v.__dsAutoTimer) { clearTimeout(v.__dsAutoTimer); v.__dsAutoTimer = null; }
+      // tear WebRTC down — nulling __pc also stops wConnectShare's retry loop (it guards on v.__pc === pc)
+      try { if (v.__pc) { v.__pc.close(); v.__pc = null; } } catch (e) {}
+      wConnectWsMse(ws, v);
+    };
+    v.__wentWs = false;
+    v.__dsGoWs = goWs;            // wConnectShare invokes this the moment ICE fails (remote w/o TURN)
+    wConnectShare(url, v);
     if (ws) {
+      // No Cloudflare TURN => remote WebRTC has no relay and never connects. ICE failure
+      // usually trips goWs in ~1-2s; this timer just backstops a "stuck in checking" peer.
+      // videoWidth stays 0 until a real frame decodes (catches "negotiated but black" too).
       v.__dsAutoTimer = setTimeout(function () {
         v.__dsAutoTimer = null;
-        // videoWidth stays 0 until a real frame decodes — this catches the "negotiated
-        // but black" case (srcObject.active is true even when no frame ever arrives).
-        if (!v.videoWidth) {
-          try { if (v.__pc) { v.__pc.close(); v.__pc = null; } } catch (e) {}
-          wConnectWsMse(ws, v);
-        }
-      }, 5000);
+        if (!v.videoWidth) goWs();
+      }, 2500);
     }
   }
   // Viewer (universal fallback): play fragmented-MP4 streamed over a WebSocket via MSE.
@@ -266,8 +285,14 @@
     try {
       if (!window.MediaSource) { console.warn("[ds] MSE unavailable"); return; }
       if (v.__ws) { try { v.__ws.close(); } catch (e) {} v.__ws = null; }
+      // CRITICAL: srcObject takes precedence over src in the HTML media spec, so if a
+      // prior (dead, frameless) WebRTC track left srcObject set, the MSE <video> stays
+      // black forever. Clear it before handing the element to MediaSource.
+      try { v.srcObject = null; } catch (e) {}
+      if (v.src) { try { URL.revokeObjectURL(v.src); } catch (e) {} }
       var ms = new MediaSource();
       v.src = URL.createObjectURL(ms);
+      v.addEventListener("loadeddata", function () { v.__wsLive = true; }, { once: true });
       var sb = null, queue = [];
       function pump() {
         if (!sb || sb.updating || !queue.length) return;
@@ -1025,7 +1050,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 46;
+  var VERSION = 47;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {

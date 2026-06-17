@@ -1,0 +1,71 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ds screen-share MSE harness</title>
+<style>
+  body { font: 14px system-ui, sans-serif; background:#1e2125; color:#ddd; margin:0; padding:16px; }
+  input { width:560px; background:#2a2e33; color:#fff; border:1px solid #444; padding:6px; border-radius:4px; }
+  button { background:#5865f2; color:#fff; border:0; padding:8px 12px; border-radius:4px; cursor:pointer; margin:4px 4px 4px 0; }
+  button.bad { background:#4a3a3a; }
+  video { width:640px; background:#000; display:block; margin-top:12px; border:1px solid #333; }
+  #log { white-space:pre-wrap; font-family:monospace; font-size:12px; color:#9aa; margin-top:10px; max-height:220px; overflow:auto; }
+  .ok { color:#4ade80; } .err { color:#f87171; }
+</style>
+<h2>discord-ish-steam — WS/fMP4 MSE harness</h2>
+<p>Verifies the viewer-side fallback: plays the daemon's fragmented-MP4 WebSocket via MediaSource.
+Use the <b>tunnel</b> URL from <code>/start</code> (the <code>wss://…/screen/ws</code>) to test end-to-end,
+or <code>ws://127.0.0.1:48890/screen/ws</code> on the host box.</p>
+<input id="url" value="wss://CHANGE-ME.trycloudflare.com/screen/ws">
+<div>
+  <button class="bad" onclick="run(true)">Repro BUG (set srcObject first, no clear)</button>
+  <button onclick="run(false)">FIXED (clear srcObject before MSE)</button>
+  <button onclick="stop()">Stop</button>
+</div>
+<video id="v" autoplay muted playsinline></video>
+<div id="log"></div>
+<script>
+var v = document.getElementById("v"), logEl = document.getElementById("log"), cur = null;
+function log(m, cls) { var s = document.createElement("span"); if (cls) s.className = cls; s.textContent = m + "\n"; logEl.appendChild(s); logEl.scrollTop = logEl.scrollHeight; }
+function stop() { if (cur) { try { cur.close(); } catch (e) {} cur = null; } try { v.srcObject = null; } catch (e) {} v.removeAttribute("src"); v.load(); log("stopped"); }
+
+// Mirrors plugin/.millennium/Dist/index.js wConnectWsMse. `simulateBug` recreates the
+// real failure: a dead WebRTC track left srcObject set. FIXED path clears it first.
+function run(simulateBug) {
+  stop();
+  logEl.textContent = "";
+  if (simulateBug) { try { v.srcObject = new MediaStream(); log("set srcObject = empty MediaStream (simulating dead WebRTC track)"); } catch (e) {} }
+
+  if (!window.MediaSource) { log("MSE unavailable", "err"); return; }
+  if (!simulateBug) { try { v.srcObject = null; log("cleared srcObject (the fix)"); } catch (e) {} }
+
+  var ms = new MediaSource();
+  v.src = URL.createObjectURL(ms);
+  var sb = null, queue = [], frames = 0;
+  v.addEventListener("loadeddata", function () { log("loadeddata fired", "ok"); }, { once: true });
+  v.addEventListener("resize", function () { log("video size now " + v.videoWidth + "x" + v.videoHeight, "ok"); });
+  function pump() {
+    if (!sb || sb.updating || !queue.length) return;
+    try { sb.appendBuffer(queue[0]); queue.shift(); }
+    catch (e) { if (e.name === "QuotaExceededError" && v.buffered.length) { try { sb.remove(0, Math.max(0, v.currentTime - 2)); } catch (e2) {} } else queue.shift(); }
+  }
+  ms.addEventListener("sourceopen", function () {
+    try { sb = ms.addSourceBuffer('video/mp4; codecs="avc1.640034"'); sb.mode = "sequence"; sb.addEventListener("updateend", pump); }
+    catch (e) { log("addSourceBuffer: " + e, "err"); return; }
+    var ws = new WebSocket(document.getElementById("url").value);
+    ws.binaryType = "arraybuffer"; cur = ws;
+    ws.onopen = function () { log("ws open"); };
+    ws.onmessage = function (ev) {
+      frames++;
+      if (frames === 1) log("first ws msg: " + ev.data.byteLength + " bytes (init seg)");
+      if (frames === 2) log("media fragments arriving…");
+      queue.push(new Uint8Array(ev.data)); pump();
+      try { if (v.buffered.length) { var end = v.buffered.end(v.buffered.length - 1); if (end - v.currentTime > 1.2) v.currentTime = end - 0.2; } } catch (e) {}
+      if (v.paused) v.play().catch(function () {});
+    };
+    ws.onerror = function () { log("ws error", "err"); };
+    ws.onclose = function () { log("ws closed after " + frames + " msgs"); };
+  });
+  setTimeout(function () {
+    log(v.videoWidth ? ("VERDICT: PLAYING ✓ (" + v.videoWidth + "x" + v.videoHeight + ")") : "VERDICT: BLACK ✗ (videoWidth still 0)", v.videoWidth ? "ok" : "err");
+  }, 4000);
+}
+</script>
