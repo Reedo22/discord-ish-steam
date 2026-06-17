@@ -321,7 +321,10 @@
           try {                                       // ride the live edge (keep latency low)
             if (v.buffered.length) {
               var end = v.buffered.end(v.buffered.length - 1);
-              if (end - v.currentTime > 1.2) v.currentTime = end - 0.2;
+              // tightened from 1.2/0.2: snap to the edge once we're >0.45s behind, leaving
+              // a ~0.1s cushion. This is the dominant WS latency knob. If a jittery link
+              // causes micro-stutter, raise these two numbers.
+              if (end - v.currentTime > 0.45) v.currentTime = end - 0.1;
             }
           } catch (e) {}
           if (v.paused && v.play) v.play().catch(function () {});
@@ -1050,7 +1053,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 47;
+  var VERSION = 48;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {

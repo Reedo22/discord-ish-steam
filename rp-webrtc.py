@@ -369,16 +369,33 @@ def pick_encoder():
              "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", "6M"] + common)
 
 
+def _apply_scale(in_args):
+    """If DS_MAX_H is set (e.g. 1080), inject a CPU scale into the -vf chain to downscale
+    to that height (width auto, kept even). Lowers bitrate pressure on the tunnel/VPN and
+    shaves encode/decode time. Default (unset) = native resolution."""
+    h = os.environ.get("DS_MAX_H", "").strip()
+    if not h.isdigit():
+        return in_args
+    sc = "scale=-2:%s" % h
+    out = list(in_args)
+    if "-vf" in out:
+        i = out.index("-vf"); out[i + 1] = sc + "," + out[i + 1]
+    else:
+        out = ["-vf", sc] + out
+    return out
+
+
 def _fmp4_enc_args():
     """H.264 args tuned for MSE fragmented-MP4: High@5.2 (covers up to 4K so the browser
     codec string is fixed), no B-frames, 1 s GOP, small fragments for low latency."""
     name, in_args, _ = pick_encoder()
+    in_args = _apply_scale(in_args)
     common = ["-profile:v", "high", "-level", "5.2", "-bf", "0", "-g", str(int(FPS)),
               "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", "2M"]
     frag = ["-movflags", "+frag_keyframe+empty_moov+default_base_moof",
             "-frag_duration", "100000", "-f", "mp4", "pipe:1"]
     if name == "h264_nvenc":
-        return in_args, ["-c:v", "h264_nvenc", "-preset", "p4", "-tune", "ll"] + common + frag
+        return in_args, ["-c:v", "h264_nvenc", "-preset", "p4", "-tune", "ull"] + common + frag
     if name == "h264_vaapi":
         return in_args, ["-c:v", "h264_vaapi"] + common + frag
     if name == "h264_qsv":
