@@ -343,31 +343,75 @@ def pick_gst_encoder():
     return (None, None)
 
 
+# H.264 encoder selection. We PROBE rather than guess: an encoder can be PRESENT but broken
+# (e.g. an nvenc build newer than the installed driver, which errors at open). So we run a
+# 1-frame test encode per candidate and use the first that actually works. Priority covers
+# NVIDIA (nvenc), Intel (qsv), AMD (amf; vaapi also covers AMD/Intel on Linux). libx264 (CPU)
+# is the guaranteed fallback. The choice is cached for the daemon's lifetime.
+_enc_pick = {"name": None}
+
+
+def _enc_in_args(name):
+    """Capture/scale-side input args (the -vf chain) for a given encoder."""
+    if name == "h264_vaapi":
+        return ["-vaapi_device", "/dev/dri/renderD128", "-vf", "format=nv12,hwupload"]
+    if name in ("h264_nvenc", "h264_qsv", "h264_amf"):
+        return ["-vf", "format=nv12"]
+    return ["-vf", "format=yuv420p"]   # libx264
+
+
+def _enc_video_args(name):
+    """Codec-specific low-latency flags (bitrate/maxrate/bufsize appended by the caller)."""
+    if name == "h264_nvenc":
+        return ["-c:v", "h264_nvenc", "-preset", "p4", "-tune", "ull"]
+    if name == "h264_amf":             # AMD (esp. Windows; vaapi covers AMD on Linux)
+        return ["-c:v", "h264_amf", "-usage", "lowlatency", "-rc", "cbr"]
+    if name == "h264_qsv":             # Intel Quick Sync
+        return ["-c:v", "h264_qsv", "-preset", "veryfast"]
+    if name == "h264_vaapi":           # AMD/Intel on Linux
+        return ["-c:v", "h264_vaapi"]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency"]
+
+
+def _probe_encoder(name):
+    """1-frame test encode — True iff this encoder actually works on this machine/driver."""
+    try:
+        cmd = (["ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi", "-i", "color=c=black:s=256x144:r=30"]
+               + _enc_in_args(name) + ["-frames:v", "1", "-c:v", name, "-f", "null", "-"])
+        return subprocess.run(cmd, capture_output=True, timeout=20).returncode == 0
+    except Exception:
+        return False
+
+
+def _working_encoder():
+    """First hardware H.264 encoder that PROBES OK, else libx264. Cached per daemon run."""
+    if _enc_pick["name"]:
+        return _enc_pick["name"]
+    avail = _ffmpeg_encoders()
+    order = []
+    if shutil.which("nvidia-smi"):
+        order.append("h264_nvenc")
+    order += ["h264_qsv", "h264_amf"]          # Intel QSV, AMD AMF (Windows-friendly)
+    if os.path.exists("/dev/dri/renderD128"):
+        order.append("h264_vaapi")             # AMD/Intel on Linux
+    for name in order:
+        if name in avail and _probe_encoder(name):
+            _enc_pick["name"] = name
+            sys.stderr.write("[enc] using %s\n" % name)
+            return name
+    _enc_pick["name"] = "libx264"
+    sys.stderr.write("[enc] no working hardware encoder; using libx264 (CPU)\n")
+    return "libx264"
+
+
 def pick_encoder():
-    """Return (name, in_args, enc_args) auto-detecting the best available H.264 encoder.
-    Viewers only decode H.264, so we always emit H.264."""
-    enc = _ffmpeg_encoders()
-    # 1s keyframe interval (was 2s): WebRTC/WHEP can't show a new viewer anything until
-    # the next keyframe, so a shorter GOP = faster share startup. -bf 0 = no B-frames (low latency).
+    """Return (name, in_args, enc_args) for the RTSP/WHEP (WebRTC) capture. H.264 always.
+    1s GOP (fast share startup), no B-frames (low latency)."""
+    name = _working_encoder()
     common = ["-g", str(int(FPS)), "-bf", "0"]
-    # NVIDIA
-    if shutil.which("nvidia-smi") and "h264_nvenc" in enc:
-        return ("h264_nvenc", ["-vf", "format=nv12"],
-                ["-c:v", "h264_nvenc", "-preset", "p4", "-tune", "ll",
-                 "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", "6M"] + common)
-    # AMD / Intel via VAAPI
-    if os.path.exists("/dev/dri/renderD128") and "h264_vaapi" in enc:
-        return ("h264_vaapi",
-                ["-vaapi_device", "/dev/dri/renderD128", "-vf", "format=nv12,hwupload"],
-                ["-c:v", "h264_vaapi", "-b:v", BITRATE, "-maxrate", BITRATE] + common)
-    # Intel QSV
-    if "h264_qsv" in enc:
-        return ("h264_qsv", ["-vf", "format=nv12"],
-                ["-c:v", "h264_qsv", "-b:v", BITRATE] + common)
-    # CPU fallback
-    return ("libx264", ["-vf", "format=yuv420p"],
-            ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-             "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", "6M"] + common)
+    rate = ["-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", "6M"]
+    return (name, _enc_in_args(name), _enc_video_args(name) + rate + common)
 
 
 def _apply_scale(in_args):
@@ -387,22 +431,15 @@ def _apply_scale(in_args):
 
 
 def _fmp4_enc_args():
-    """H.264 args tuned for MSE fragmented-MP4: High@5.2 (covers up to 4K so the browser
-    codec string is fixed), no B-frames, 1 s GOP, small fragments for low latency."""
-    name, in_args, _ = pick_encoder()
-    in_args = _apply_scale(in_args)
+    """H.264 args for MSE fragmented-MP4: High@5.2 (covers up to 4K so the browser codec
+    string is fixed), no B-frames, 1 s GOP, small fragments. Same probed encoder as WebRTC."""
+    name = _working_encoder()
+    in_args = _apply_scale(_enc_in_args(name))
     common = ["-profile:v", "high", "-level", "5.2", "-bf", "0", "-g", str(int(FPS)),
               "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", "2M"]
     frag = ["-movflags", "+frag_keyframe+empty_moov+default_base_moof",
             "-frag_duration", "100000", "-f", "mp4", "pipe:1"]
-    if name == "h264_nvenc":
-        return in_args, ["-c:v", "h264_nvenc", "-preset", "p4", "-tune", "ull"] + common + frag
-    if name == "h264_vaapi":
-        return in_args, ["-c:v", "h264_vaapi"] + common + frag
-    if name == "h264_qsv":
-        return in_args, ["-c:v", "h264_qsv"] + common + frag
-    return ["-vf", "format=yuv420p"], ["-c:v", "libx264", "-preset", "veryfast",
-            "-tune", "zerolatency"] + common + frag
+    return in_args, _enc_video_args(name) + common + frag
 
 
 def start_fmp4(geom=None, win=None):
