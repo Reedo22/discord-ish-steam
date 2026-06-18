@@ -416,13 +416,13 @@ def pick_encoder():
 
 
 def _apply_scale(in_args):
-    """If DS_MAX_H is set (e.g. 1080), inject a CPU scale into the -vf chain to downscale
-    to that height (width auto, kept even). Lowers bitrate pressure on the tunnel/VPN and
-    shaves encode/decode time. Default (unset) = native resolution."""
-    h = MAX_H
-    if not h.isdigit():
-        return in_args
-    sc = "scale=-2:%s" % h
+    """ALWAYS inject a normalizing CPU scale into the -vf chain: force EVEN width+height and
+    cap the height. H.264/NVENC reject odd dimensions and just output BLACK (e.g. a 1599x899
+    window, or an odd monitor mode), so we round both dims down to even. If DS_MAX_H / `h=` is
+    set we also cap to that height (downscale only — never upscale a smaller source like 900p);
+    unset = a huge cap, i.e. native size but still evened."""
+    h = MAX_H if MAX_H.isdigit() else "100000"
+    sc = "scale=-2:2*trunc(min(ih\\,%s)/2)" % h
     out = list(in_args)
     if "-vf" in out:
         i = out.index("-vf"); out[i + 1] = sc + "," + out[i + 1]
