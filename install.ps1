@@ -80,25 +80,34 @@ if ($enabled -notcontains "discordish-chat") {
 } else { Write-Host "discordish-chat already enabled" }
 
 # 6) screen-share daemon prerequisites (Python + ffmpeg) — auto-install via winget if missing.
-# Without Python the whole daemon block below is skipped, so the share picker stays empty.
+# GOTCHA: the Microsoft Store ships a fake "python.exe" stub (under ...\WindowsApps\) that only
+# nags to install from the Store. Get-Command python MATCHES it, so a naive check thinks Python
+# is present, skips the install, and points the daemon at a stub that never runs (= empty share
+# picker). We resolve REAL Python via the `py` launcher (never shadowed by the stub) and treat
+# the WindowsApps stub as absent.
 function Update-SessionPath {
     $m = [Environment]::GetEnvironmentVariable('Path','Machine')
     $u = [Environment]::GetEnvironmentVariable('Path','User')
     $env:Path = (@($m, $u) | Where-Object { $_ }) -join ';'
 }
+function Get-RealPyExe {
+    $exe = (& py -3 -c "import sys; print(sys.executable)" 2>$null)
+    if ($exe -and (Test-Path $exe)) { return $exe.Trim() }
+    $p = Get-Command python.exe -ErrorAction SilentlyContinue
+    if ($p -and $p.Source -notlike "*\WindowsApps\*") { return $p.Source }
+    return $null
+}
 $winget = Get-Command winget -ErrorAction SilentlyContinue
-if (-not ((Get-Command python -ErrorAction SilentlyContinue) -or (Get-Command py -ErrorAction SilentlyContinue))) {
+if (-not (Get-RealPyExe)) {
     if ($winget) { Write-Host "Installing Python (winget)..."; winget install -e --id Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements | Out-Null; Update-SessionPath }
-    else { Write-Warning "Python missing and winget unavailable - install Python 3 manually, then re-run." }
+    else { Write-Warning "Real Python missing (the Store stub doesn't count) and winget unavailable - install Python 3 from python.org, then re-run." }
 }
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     if ($winget) { Write-Host "Installing ffmpeg (winget)..."; winget install -e --id Gyan.FFmpeg --silent --accept-package-agreements --accept-source-agreements | Out-Null; Update-SessionPath }
     else { Write-Warning "ffmpeg missing and winget unavailable - install ffmpeg manually, then re-run." }
 }
-$py = $null
-if (Get-Command python -ErrorAction SilentlyContinue) { $py = (Get-Command python) }
-elseif (Get-Command py -ErrorAction SilentlyContinue) { $py = (Get-Command py) }
-if (-not $py) { Write-Warning "Python still not found - reopen the terminal (PATH refresh) and re-run install.ps1." }
+$pyExe = Get-RealPyExe
+if (-not $pyExe) { Write-Warning "Real Python still not found (Store stub?) - reopen the terminal, or disable the python App Execution Aliases (Settings > Apps > Advanced app settings), then re-run." }
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { Write-Warning "ffmpeg still not on PATH - reopen the terminal / reboot so the daemon can find it." }
 
 # 7) fetch the Windows host binaries (MediaMTX + cloudflared) into bin\
@@ -106,9 +115,9 @@ try { & (Join-Path $repo "bin\fetch-windows.ps1") }
 catch { Write-Warning "Couldn't fetch host binaries ($($_.Exception.Message)). Re-run bin\fetch-windows.ps1 later; theme/plugin still installed." }
 
 # 8) register a logon task so the daemon is always up (mirrors the Linux systemd service)
-if ($py) {
-    $pyw = ($py.Source -replace "python\.exe$", "pythonw.exe")
-    if (-not (Test-Path $pyw)) { $pyw = $py.Source }
+if ($pyExe) {
+    $pyw = ($pyExe -replace "python\.exe$", "pythonw.exe")
+    if (-not (Test-Path $pyw)) { $pyw = $pyExe }
     $daemon  = Join-Path $repo "rp-webrtc.py"
     $action  = New-ScheduledTaskAction -Execute $pyw -Argument "`"$daemon`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn
