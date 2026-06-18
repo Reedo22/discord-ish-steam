@@ -79,14 +79,27 @@ if ($enabled -notcontains "discordish-chat") {
     Write-Host "Enabled discordish-chat in config.json"
 } else { Write-Host "discordish-chat already enabled" }
 
-# 6) screen-share daemon prerequisites
+# 6) screen-share daemon prerequisites (Python + ffmpeg) — auto-install via winget if missing.
+# Without Python the whole daemon block below is skipped, so the share picker stays empty.
+function Update-SessionPath {
+    $m = [Environment]::GetEnvironmentVariable('Path','Machine')
+    $u = [Environment]::GetEnvironmentVariable('Path','User')
+    $env:Path = (@($m, $u) | Where-Object { $_ }) -join ';'
+}
+$winget = Get-Command winget -ErrorAction SilentlyContinue
+if (-not ((Get-Command python -ErrorAction SilentlyContinue) -or (Get-Command py -ErrorAction SilentlyContinue))) {
+    if ($winget) { Write-Host "Installing Python (winget)..."; winget install -e --id Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements | Out-Null; Update-SessionPath }
+    else { Write-Warning "Python missing and winget unavailable - install Python 3 manually, then re-run." }
+}
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+    if ($winget) { Write-Host "Installing ffmpeg (winget)..."; winget install -e --id Gyan.FFmpeg --silent --accept-package-agreements --accept-source-agreements | Out-Null; Update-SessionPath }
+    else { Write-Warning "ffmpeg missing and winget unavailable - install ffmpeg manually, then re-run." }
+}
 $py = $null
 if (Get-Command python -ErrorAction SilentlyContinue) { $py = (Get-Command python) }
 elseif (Get-Command py -ErrorAction SilentlyContinue) { $py = (Get-Command py) }
-if (-not $py) { Write-Warning "Python not found - the screen-share daemon needs it. 'winget install Python.Python.3'." }
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-    Write-Warning "ffmpeg not on PATH - screen-share capture needs it ('winget install Gyan.FFmpeg'). Theme/calls/voice still work."
-}
+if (-not $py) { Write-Warning "Python still not found - reopen the terminal (PATH refresh) and re-run install.ps1." }
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { Write-Warning "ffmpeg still not on PATH - reopen the terminal / reboot so the daemon can find it." }
 
 # 7) fetch the Windows host binaries (MediaMTX + cloudflared) into bin\
 try { & (Join-Path $repo "bin\fetch-windows.ps1") }
