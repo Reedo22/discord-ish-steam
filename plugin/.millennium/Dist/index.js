@@ -176,7 +176,7 @@
   var WCTL = "http://127.0.0.1:48592";          // local daemon control API
   // share encode prefs (resolution/bitrate dropdowns), persisted across sessions
   window.__ds_share_opts = window.__ds_share_opts || (function () {
-    var d = { h: "1080", br: "3M" };   // remote-safe default; pick "Auto" for native 4K on LAN
+    var d = { h: "1080", br: "3M", fps: "30" };   // remote-safe default; pick "Auto" for native 4K on LAN
     try { var s = JSON.parse(localStorage.getItem("ds_share_opts")); if (s) { d.h = s.h || d.h; d.br = s.br || d.br; } } catch (e) {}
     return d;
   })();
@@ -190,6 +190,7 @@
     var o = window.__ds_share_opts || {};
     params.push("h=" + encodeURIComponent(o.h && o.h !== "auto" ? o.h : "auto"));
     if (o.br) params.push("br=" + encodeURIComponent(o.br));
+    if (o.fps) params.push("fps=" + encodeURIComponent(o.fps));
     var qs = params.length ? "?" + params.join("&") : "";
     return fetch(WCTL + "/start" + qs, { cache: "no-store" })
       .then(function (r) { return r.json(); })
@@ -305,6 +306,14 @@
       v.src = URL.createObjectURL(ms);
       v.addEventListener("loadeddata", function () { v.__wsLive = true; }, { once: true });
       var sb = null, queue = [];
+      // Adaptive jitter buffer: `target` = seconds we keep buffered ahead of live. Grows on
+      // stalls (bad link -> smoother, higher latency), decays when stable (good link -> low
+      // latency). This "forces smooth" automatically without anyone touching a setting.
+      var bufMin = 0.35, bufMax = 3.0, target = 0.5, lastStall = 0, lastDecay = 0;
+      v.addEventListener("waiting", function () {            // playback underran -> need cushion
+        target = Math.min(bufMax, target + 0.6);
+        lastStall = Date.now();
+      });
       function pump() {
         if (!sb || sb.updating || !queue.length) return;
         var chunk = queue[0];
@@ -329,13 +338,16 @@
           queue.push(new Uint8Array(ev.data));
           if (queue.length > 240) queue.splice(0, queue.length - 240);   // bound memory
           pump();
-          try {                                       // ride the live edge (keep latency low)
+          try {                                       // ride the edge, keeping ~`target` cushion
             if (v.buffered.length) {
               var end = v.buffered.end(v.buffered.length - 1);
-              // tightened from 1.2/0.2: snap to the edge once we're >0.45s behind, leaving
-              // a ~0.1s cushion. This is the dominant WS latency knob. If a jittery link
-              // causes micro-stutter, raise these two numbers.
-              if (end - v.currentTime > 0.45) v.currentTime = end - 0.1;
+              var ahead = end - v.currentTime, now = Date.now();
+              // decay target back toward low-latency after 10s with no stall (throttled ~3s)
+              if (now - lastStall > 10000 && now - lastDecay > 3000 && target > bufMin) {
+                target = Math.max(bufMin, target - 0.15); lastDecay = now;
+              }
+              if (ahead > target + 0.5) v.currentTime = end - target;   // fell behind -> snap to cushion
+              v.playbackRate = ahead < target * 0.6 ? 0.97 : 1.0;       // running low -> ease off to rebuild
             }
           } catch (e) {}
           if (v.paused && v.play) v.play().catch(function () {});
@@ -596,7 +608,8 @@
       row.appendChild(lb); row.appendChild(sel); spop.appendChild(row);
     };
     addShareSel("Resolution", "h", [["Auto", "auto"], ["4K", "2160"], ["1440p", "1440"], ["1080p", "1080"], ["720p", "720"], ["480p", "480"]]);
-    addShareSel("Bitrate", "br", [["Smooth (1.5M)", "1.5M"], ["Balanced (3M)", "3M"], ["Sharp (6M)", "6M"]]);
+    addShareSel("Bitrate", "br", [["Potato (0.5M)", "0.5M"], ["Low (1M)", "1M"], ["Smooth (1.5M)", "1.5M"], ["Balanced (3M)", "3M"], ["Sharp (6M)", "6M"]]);
+    addShareSel("FPS", "fps", [["15 fps", "15"], ["20 fps", "20"], ["30 fps", "30"]]);
     var sgo = el(doc, "button", "ds-stream-go"); spop.appendChild(sgo);
     var srefresh = function () {
       var sharing = window.__ds_share_mode === "webrtc";
@@ -1085,7 +1098,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 50;
+  var VERSION = 51;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {

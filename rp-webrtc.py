@@ -766,7 +766,7 @@ class H(BaseHTTPRequestHandler):
             if not win and not geom:
                 mons = monitors(); geom = (next((m for m in mons if m["primary"]), mons[0])["geom"] if mons else "1920x1080+0+0")
             # live encode overrides (UI dropdowns) — set before (re)starting the capture.
-            global BITRATE, MAX_H
+            global BITRATE, MAX_H, FPS
             br = (q.get("br", [None])[0] or "").strip()
             if re.match(r"^\d+(\.\d+)?[MmKk]?$", br):
                 BITRATE = br
@@ -775,6 +775,9 @@ class H(BaseHTTPRequestHandler):
                 MAX_H = hh
             elif hh in ("auto", "native", "0"):
                 MAX_H = ""
+            fps = (q.get("fps", [None])[0] or "").strip()
+            if fps.isdigit() and 1 <= int(fps) <= 60:
+                FPS = fps
             ok = start_capture(geom=geom, win=win)
             # local=1 -> skip the tunnel (LAN-only, faster). default -> public https tunnel.
             tun = None if q.get("local", ["0"])[0] == "1" else ensure_tunnel()
@@ -785,7 +788,7 @@ class H(BaseHTTPRequestHandler):
             self._send({"ok": ok, "whep": out_whep, "ws": out_ws, "lan_whep": lan_whep,
                         "tunnel": bool(tun), "path": "screen", "geom": geom,
                         "encoder": pick_encoder()[0], "ice": turn_ice(),
-                        "h": MAX_H or "auto", "br": BITRATE})
+                        "h": MAX_H or "auto", "br": BITRATE, "fps": FPS})
         elif u.path == "/stop":
             # stop the capture but KEEP the tunnel warm for the next share (instant restart)
             with lock: stop_capture()
