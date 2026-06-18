@@ -91,10 +91,25 @@ function Update-SessionPath {
     $env:Path = (@($m, $u) | Where-Object { $_ }) -join ';'
 }
 function Get-RealPyExe {
-    $exe = (& py -3 -c "import sys; print(sys.executable)" 2>$null)
-    if ($exe -and (Test-Path $exe)) { return $exe.Trim() }
-    $p = Get-Command python.exe -ErrorAction SilentlyContinue
-    if ($p -and $p.Source -notlike "*\WindowsApps\*") { return $p.Source }
+    # The Store python.exe stub prints a nag and exits non-zero; REAL Python (even a Store-
+    # installed one living under WindowsApps\) returns its sys.executable. So we EXECUTE each
+    # candidate and trust whatever behaves like Python — never path-match, never assume `py`
+    # exists (a missing `py` must not crash the installer).
+    $tries = @(
+        @{ exe = 'py';      pre = @('-3') },
+        @{ exe = 'python';  pre = @() },
+        @{ exe = 'python3'; pre = @() }
+    )
+    foreach ($t in $tries) {
+        try {
+            $a = @($t.pre + @('-c', 'import sys;print(sys.executable)'))
+            $out = (& $t.exe @a 2>$null)
+            if ($LASTEXITCODE -eq 0 -and $out) {
+                $p = ($out | Select-Object -Last 1).ToString().Trim()
+                if ($p -and (Test-Path $p)) { return $p }
+            }
+        } catch { }
+    }
     return $null
 }
 $winget = Get-Command winget -ErrorAction SilentlyContinue
