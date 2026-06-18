@@ -176,7 +176,7 @@
   var WCTL = "http://127.0.0.1:48592";          // local daemon control API
   // share encode prefs (resolution/bitrate dropdowns), persisted across sessions
   window.__ds_share_opts = window.__ds_share_opts || (function () {
-    var d = { h: "1080", br: "3M", fps: "30" };   // remote-safe default; pick "Auto" for native 4K on LAN
+    var d = { h: "1080", br: "3M", fps: "30", audio: "on" };   // remote-safe default; pick "Auto" for native 4K on LAN
     try { var s = JSON.parse(localStorage.getItem("ds_share_opts")); if (s) { d.h = s.h || d.h; d.br = s.br || d.br; } } catch (e) {}
     return d;
   })();
@@ -191,6 +191,7 @@
     params.push("h=" + encodeURIComponent(o.h && o.h !== "auto" ? o.h : "auto"));
     if (o.br) params.push("br=" + encodeURIComponent(o.br));
     if (o.fps) params.push("fps=" + encodeURIComponent(o.fps));
+    params.push("audio=" + (o.audio === "off" ? "0" : "1"));
     var qs = params.length ? "?" + params.join("&") : "";
     return fetch(WCTL + "/start" + qs, { cache: "no-store" })
       .then(function (r) { return r.json(); })
@@ -198,6 +199,7 @@
         window.__ds_share_url = j && j.whep;                 // LAN/public url for the viewer
         window.__ds_share_ice = (j && j.ice) || null;        // TURN/STUN servers for the viewer
         window.__ds_share_ws = (j && j.ws) || null;
+        window.__ds_share_audio = !!(j && j.audio);           // did audio actually make it in?
         window.__ds_share_local = "http://127.0.0.1:8889/screen/whep";   // loopback for self-preview
         window.__ds_share_info = j; return j;
       })
@@ -327,7 +329,12 @@
       }
       ms.addEventListener("sourceopen", function () {
         try {
-          sb = ms.addSourceBuffer('video/mp4; codecs="avc1.640034"');   // High@5.2, covers up to 4K
+          // include the AAC track in the codec string only when the host signaled audio,
+          // else MSE waits forever for an audio track that never arrives.
+          var codec = window.__ds_view_audio
+            ? 'video/mp4; codecs="avc1.640034,mp4a.40.2"'   // High@5.2 + AAC-LC
+            : 'video/mp4; codecs="avc1.640034"';            // High@5.2, video only
+          sb = ms.addSourceBuffer(codec);
           sb.mode = "sequence";
           sb.addEventListener("updateend", pump);
         } catch (e) { console.warn("[ds] addSourceBuffer", e); return; }
@@ -610,6 +617,7 @@
     addShareSel("Resolution", "h", [["Auto", "auto"], ["4K", "2160"], ["1440p", "1440"], ["1080p", "1080"], ["720p", "720"], ["480p", "480"]]);
     addShareSel("Bitrate", "br", [["Potato (0.5M)", "0.5M"], ["Low (1M)", "1M"], ["Smooth (1.5M)", "1.5M"], ["Balanced (3M)", "3M"], ["Sharp (6M)", "6M"]]);
     addShareSel("FPS", "fps", [["15 fps", "15"], ["20 fps", "20"], ["30 fps", "30"]]);
+    addShareSel("Audio", "audio", [["On", "on"], ["Off", "off"]]);
     var sgo = el(doc, "button", "ds-stream-go"); spop.appendChild(sgo);
     var srefresh = function () {
       var sharing = window.__ds_share_mode === "webrtc";
@@ -634,7 +642,7 @@
         wStopShare(); setTimeout(srefresh, 60);
       } else {
         wStartShare(window.__ds_share_geom).then(function () {
-          if (window.__ds_share_url) { try { sendSignal(doc, sigPayload(window.__ds_share_url, window.__ds_share_ice, window.__ds_share_ws)); } catch (e) {} }  // auto-signal the viewer (url + ICE)
+          if (window.__ds_share_url) { try { sendSignal(doc, sigPayload(window.__ds_share_url, window.__ds_share_ice, window.__ds_share_ws, window.__ds_share_audio)); } catch (e) {} }  // auto-signal the viewer (url + ICE + audio)
           srefresh();
         });
       }
@@ -768,10 +776,20 @@
     if (window.__ds_view_url) {
       if (!shareTile) {
         shareTile = el(doc, "div", "ds-tile ds-share-tile");
+        if (!shareTile.style.position) shareTile.style.position = "relative";
         var vid = el(doc, "video"); vid.className = "ds-share-video";
         vid.autoplay = true; vid.muted = true; vid.playsInline = true;
         var lbl = el(doc, "div", "ds-name"); lbl.textContent = "🖥 Screen";
-        shareTile.appendChild(vid); shareTile.appendChild(lbl);
+        // browsers block autoplay WITH sound — show a one-click unmute when the host shares audio
+        var unmute = el(doc, "div", "ds-unmute"); unmute.textContent = "🔊 Enable sound";
+        unmute.style.cssText = "position:absolute;left:8px;bottom:8px;background:#5865f2;color:#fff;padding:4px 9px;border-radius:6px;font-size:12px;cursor:pointer;z-index:5;display:none";
+        unmute.addEventListener("click", function (e) {
+          e.stopPropagation(); vid.muted = false; vid.volume = 1;
+          if (vid.play) vid.play().catch(function () {});
+          unmute.style.display = "none";
+        });
+        shareTile.appendChild(vid); shareTile.appendChild(lbl); shareTile.appendChild(unmute);
+        shareTile.__unmute = unmute; shareTile.__vid = vid;
         shareTile.addEventListener("click", function () {
           __ds_w.expanded = !__ds_w.expanded;
           stage.classList.toggle("ds-share-expanded", __ds_w.expanded);
@@ -783,6 +801,9 @@
         shareTile.dataset.url = window.__ds_view_url;
         wConnectAuto(window.__ds_view_url, shareTile.querySelector("video"));
       }
+      // show the unmute prompt only while audio is available AND still muted
+      if (shareTile && shareTile.__unmute)
+        shareTile.__unmute.style.display = (window.__ds_view_audio && shareTile.__vid && shareTile.__vid.muted) ? "block" : "none";
     } else if (shareTile) {
       var ov = shareTile.querySelector("video");
       if (ov) {
@@ -844,25 +865,23 @@
   window.__ds_sig_seen = window.__ds_sig_seen || {};   // per-friend last-processed ordinal
   // Payload = "<whep-url>" optionally followed by "|ice=<base64(JSON iceServers)>" so the
   // viewer gets the host's Cloudflare TURN credentials (needed to relay across NATs).
-  function sigPayload(url, ice, ws) {
+  // "<url>|ice=<b64 JSON>|ws=<enc>|aud=1" — base64 and encodeURIComponent never emit '|',
+  // so a simple split is safe and order-independent.
+  function sigPayload(url, ice, ws, audio) {
     var p = url;
     if (ice && ice.length) { try { p += "|ice=" + btoa(JSON.stringify(ice)); } catch (e) {} }
     if (ws) p += "|ws=" + encodeURIComponent(ws);
+    if (audio) p += "|aud=1";
     return p;
   }
   function parseSignal(payload) {
-    var out = { url: payload, ice: null, ws: null };
-    var iceI = payload.indexOf("|ice=");
-    var wsI = payload.indexOf("|ws=");
-    var cut = Math.min(iceI < 0 ? payload.length : iceI, wsI < 0 ? payload.length : wsI);
-    out.url = payload.slice(0, cut);
-    if (iceI >= 0) {
-      var end = (wsI > iceI) ? wsI : payload.length;
-      try { out.ice = JSON.parse(atob(payload.slice(iceI + 5, end))); } catch (e) {}
-    }
-    if (wsI >= 0) {
-      var wsEnd = (iceI > wsI) ? iceI : payload.length;
-      try { out.ws = decodeURIComponent(payload.slice(wsI + 4, wsEnd)); } catch (e) {}
+    var parts = payload.split("|");
+    var out = { url: parts[0], ice: null, ws: null, audio: false };
+    for (var i = 1; i < parts.length; i++) {
+      var s = parts[i];
+      if (s.indexOf("ice=") === 0) { try { out.ice = JSON.parse(atob(s.slice(4))); } catch (e) {} }
+      else if (s.indexOf("ws=") === 0) { try { out.ws = decodeURIComponent(s.slice(3)); } catch (e) {} }
+      else if (s.indexOf("aud=") === 0) { out.audio = s.slice(4) === "1"; }
     }
     return out;
   }
@@ -898,8 +917,8 @@
           if ((window.__ds_sig_seen[f.m_unAccountID] || 0) >= ord) break;   // already handled
           window.__ds_sig_seen[f.m_unAccountID] = ord;
           var payload = m.strMessageInternal.slice(SIG.length);
-          if (payload === "stop") { window.__ds_view_url = null; window.__ds_view_ice = null; window.__ds_view_ws = null; }
-          else { var p = parseSignal(payload); window.__ds_view_url = p.url; window.__ds_view_ice = p.ice; window.__ds_view_ws = p.ws; }
+          if (payload === "stop") { window.__ds_view_url = null; window.__ds_view_ice = null; window.__ds_view_ws = null; window.__ds_view_audio = false; }
+          else { var p = parseSignal(payload); window.__ds_view_url = p.url; window.__ds_view_ice = p.ice; window.__ds_view_ws = p.ws; window.__ds_view_audio = p.audio; }
           break;
         }
       });
@@ -1098,7 +1117,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 51;
+  var VERSION = 52;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {

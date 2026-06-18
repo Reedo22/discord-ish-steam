@@ -38,6 +38,7 @@ DISPLAY = os.environ.get("DISPLAY", ":1")   # Linux/X11 only; ignored on Windows
 BITRATE = os.environ.get("DS_BITRATE", "6M")   # default; per-share override via /start?br=
 FPS = os.environ.get("DS_FPS", "30")
 MAX_H = os.environ.get("DS_MAX_H", "").strip()  # encode height cap; "" = native. /start?h= overrides live.
+AUDIO = os.environ.get("DS_AUDIO", "1") != "0"  # capture desktop audio (loopback). /start?audio= overrides.
 # Tunnel mode: "auto" = pre-warm a cloudflared tunnel at boot + keep it warm (fast first
 # share, works off-LAN). "off" = never tunnel (LAN-only; fastest, no public endpoint).
 TUNNEL = os.environ.get("DS_TUNNEL", "auto").lower()
@@ -430,22 +431,110 @@ def _apply_scale(in_args):
     return out
 
 
+# fragmented-MP4 output muxer args (appended AFTER video[+audio] codec args).
+FMP4_OUT = ["-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+            "-frag_duration", "100000", "-f", "mp4", "pipe:1"]
+
+
 def _fmp4_enc_args():
-    """H.264 args for MSE fragmented-MP4: High@5.2 (covers up to 4K so the browser codec
-    string is fixed), no B-frames, 1 s GOP, small fragments. Same probed encoder as WebRTC."""
+    """Video input + video-codec args for MSE fragmented-MP4: High@5.2 (covers up to 4K so the
+    browser codec string is fixed), no B-frames, 1 s GOP. Returns (in_args, video_enc_args);
+    the caller appends audio codec + FMP4_OUT. Same probed encoder as WebRTC."""
     name = _working_encoder()
     in_args = _apply_scale(_enc_in_args(name))
     common = ["-profile:v", "high", "-level", "5.2", "-bf", "0", "-g", str(int(FPS)),
               "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", "2M"]
-    frag = ["-movflags", "+frag_keyframe+empty_moov+default_base_moof",
-            "-frag_duration", "100000", "-f", "mp4", "pipe:1"]
-    return in_args, _enc_video_args(name) + common + frag
+    return in_args, _enc_video_args(name) + common
+
+
+def _pulse_monitor():
+    """Linux: the monitor source of the default output sink (native desktop-audio loopback —
+    NOT a virtual device). Returns the source name, or None."""
+    try:
+        sink = subprocess.run(["pactl", "get-default-sink"], capture_output=True, text=True, timeout=3).stdout.strip()
+        if sink:
+            return sink + ".monitor"
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(["pactl", "list", "short", "sources"], capture_output=True, text=True, timeout=3).stdout
+        for line in out.splitlines():
+            p = line.split()
+            if len(p) >= 2 and p[1].endswith(".monitor"):
+                return p[1]
+    except Exception:
+        pass
+    return None
+
+
+def _audio_input():
+    """ffmpeg input args for desktop audio, with NO virtual device. Returns (args, win_pcm)
+    where win_pcm=True means a WASAPI-loopback thread must feed PCM to the encoder's stdin.
+    Falls back to [] (video-only) if audio is off/unavailable — never breaks the video."""
+    if not AUDIO:
+        return [], False
+    if IS_WIN:
+        try:
+            import pyaudiowpatch  # noqa: F401  (presence check only)
+        except Exception:
+            sys.stderr.write("[audio] pyaudiowpatch not installed -> video only (pip install pyaudiowpatch)\n")
+            return [], False
+        return (["-f", "s16le", "-ar", "48000", "-ac", "2", "-thread_queue_size", "1024", "-i", "pipe:0"], True)
+    mon = _pulse_monitor()
+    if not mon:
+        sys.stderr.write("[audio] no pulse monitor found -> video only\n")
+        return [], False
+    return (["-f", "pulse", "-thread_queue_size", "1024", "-i", mon], False)
+
+
+def _wasapi_loopback_feed(proc):
+    """Windows: capture the default output's WASAPI loopback (48k stereo s16) and pipe it to
+    the encoder's stdin. On any error, write silence so ffmpeg's pipe:0 input never stalls
+    (a stalled audio input would freeze the whole stream)."""
+    silence = b"\x00" * 4096
+    try:
+        import pyaudiowpatch as pa
+        p = pa.PyAudio()
+        loop = None
+        try:
+            wasapi = p.get_host_api_info_by_type(pa.paWASAPI)
+            dflt = p.get_device_info_by_index(wasapi["defaultOutputDevice"])
+            for d in p.get_loopback_device_info_generator():
+                if dflt["name"] in d["name"]:
+                    loop = d
+                    break
+        except Exception:
+            pass
+        if loop is None:
+            for d in p.get_loopback_device_info_generator():
+                loop = d
+                break
+        stream = p.open(format=pa.paInt16, channels=2, rate=48000, frames_per_buffer=1024,
+                        input=True, input_device_index=(loop["index"] if loop else None))
+        while proc.poll() is None:
+            try:
+                data = stream.read(1024, exception_on_overflow=False)
+            except Exception:
+                data = silence
+            try:
+                proc.stdin.write(data)
+            except Exception:
+                break
+    except Exception as e:
+        sys.stderr.write("[audio] WASAPI loopback failed (%s); feeding silence\n" % e)
+        while proc.poll() is None:
+            try:
+                proc.stdin.write(silence)
+                time.sleep(0.02)
+            except Exception:
+                break
 
 
 def start_fmp4(geom=None, win=None):
     """Start the fragmented-MP4 encode for the WS path and pump it to ws_broadcast.
-    Runs alongside the RTSP/WHEP capture so the viewer can use either transport."""
-    in_args, enc_args = _fmp4_enc_args()
+    Runs alongside the RTSP/WHEP capture so the viewer can use either transport.
+    Muxes desktop audio (AAC) when available — Linux pulse monitor / Windows WASAPI loopback."""
+    in_args, venc = _fmp4_enc_args()
     env = _cap_env()
     if IS_WIN and win:
         cap_in = ["-f", "gdigrab", "-draw_mouse", "1", "-framerate", FPS, "-i", "title=%s" % win]
@@ -463,11 +552,20 @@ def start_fmp4(geom=None, win=None):
         else:
             cap_in = ["-f", "x11grab", "-draw_mouse", "1", "-framerate", FPS,
                       "-video_size", "%sx%s" % (w, h), "-i", "%s+%s,%s" % (DISPLAY, x, y)]
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning"] + cap_in + in_args + enc_args
+    audio_in, win_pcm = _audio_input()
+    state["audio"] = bool(audio_in)   # actual audio state (may be False even if AUDIO on)
+    # with a 2nd (audio) input, map explicitly and encode AAC; "-async 1" nudges A/V sync.
+    aud_out = (["-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "128k", "-async", "1"]
+               if audio_in else [])
+    cmd = (["ffmpeg", "-hide_banner", "-loglevel", "warning"]
+           + cap_in + audio_in + in_args + venc + aud_out + FMP4_OUT)
     with ws_lock:
         fmp4_init["seg"] = None
-    p = _spawn(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+    p = _spawn(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+               stdin=(subprocess.PIPE if win_pcm else subprocess.DEVNULL), env=env)
     state["fmp4"] = p
+    if win_pcm:
+        threading.Thread(target=_wasapi_loopback_feed, args=(p,), daemon=True).start()
     threading.Thread(target=fmp4_pump, args=(p.stdout,), daemon=True).start()
     return True
 
@@ -766,7 +864,7 @@ class H(BaseHTTPRequestHandler):
             if not win and not geom:
                 mons = monitors(); geom = (next((m for m in mons if m["primary"]), mons[0])["geom"] if mons else "1920x1080+0+0")
             # live encode overrides (UI dropdowns) — set before (re)starting the capture.
-            global BITRATE, MAX_H, FPS
+            global BITRATE, MAX_H, FPS, AUDIO
             br = (q.get("br", [None])[0] or "").strip()
             if re.match(r"^\d+(\.\d+)?[MmKk]?$", br):
                 BITRATE = br
@@ -778,6 +876,11 @@ class H(BaseHTTPRequestHandler):
             fps = (q.get("fps", [None])[0] or "").strip()
             if fps.isdigit() and 1 <= int(fps) <= 60:
                 FPS = fps
+            au = (q.get("audio", [None])[0] or "").strip().lower()
+            if au in ("0", "false", "off"):
+                AUDIO = False
+            elif au in ("1", "true", "on"):
+                AUDIO = True
             ok = start_capture(geom=geom, win=win)
             # local=1 -> skip the tunnel (LAN-only, faster). default -> public https tunnel.
             tun = None if q.get("local", ["0"])[0] == "1" else ensure_tunnel()
@@ -788,7 +891,8 @@ class H(BaseHTTPRequestHandler):
             self._send({"ok": ok, "whep": out_whep, "ws": out_ws, "lan_whep": lan_whep,
                         "tunnel": bool(tun), "path": "screen", "geom": geom,
                         "encoder": pick_encoder()[0], "ice": turn_ice(),
-                        "h": MAX_H or "auto", "br": BITRATE, "fps": FPS})
+                        "h": MAX_H or "auto", "br": BITRATE, "fps": FPS,
+                        "audio": bool(state.get("audio"))})
         elif u.path == "/stop":
             # stop the capture but KEEP the tunnel warm for the next share (instant restart)
             with lock: stop_capture()
