@@ -1134,6 +1134,112 @@ def start_media_server():
     return srv
 
 
+def _run(cmd, timeout=40):
+    try:
+        p = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        return p.returncode, (p.stdout or b""), (p.stderr or b"")
+    except Exception as e:
+        return -1, b"", str(e).encode()
+
+
+def _ffprobe_streams(path):
+    rc, out, err = _run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name",
+                         "-of", "csv=p=0", path], timeout=15)
+    return out.decode(errors="replace").strip().replace("\n", " | ") if rc == 0 else "ffprobe n/a"
+
+
+def _win_audio_rms():
+    """Capture ~1s of WASAPI loopback and return RMS level — ~0 = silence (nothing playing or
+    capture broken), >50ish = real audio. Answers 'does desktop-audio capture actually work'."""
+    import math
+    dev = _wasapi_device()
+    if not dev:
+        return None, "no loopback device"
+    try:
+        import pyaudiowpatch as pa
+        p = pa.PyAudio()
+        s = p.open(format=pa.paInt16, channels=dev["ch"], rate=dev["rate"],
+                   frames_per_buffer=1024, input=True, input_device_index=dev["index"])
+        raw = b""
+        for _ in range(max(1, int(dev["rate"] / 1024))):
+            raw += s.read(1024, exception_on_overflow=False)
+        s.close(); p.terminate()
+        n = len(raw) // 2
+        if not n:
+            return 0.0, "no samples"
+        sm = struct.unpack("<%dh" % n, raw[:n * 2])
+        rms = math.sqrt(sum(x * x for x in sm) / n)
+        return rms, "%dHz %dch" % (dev["rate"], dev["ch"])
+    except Exception as e:
+        return None, "capture error: %s" % e
+
+
+def selftest():
+    """Run over SSH (`python rp-webrtc.py --selftest`) to test the capture/encode/audio pipeline
+    end-to-end and print PASS/FAIL. Does NOT need the server running. The viewer/NC side lives in
+    Steam's CEF and can't be tested from here."""
+    L = lambda *a: print(*a, flush=True)
+    L("=== rp-webrtc self-test ===")
+    L("OS=%s  python=%s  workdir=%s" % (sys.platform, sys.version.split()[0], HERE))
+    rc, out, err = _run(["ffmpeg", "-version"], timeout=10)
+    L("ffmpeg: %s" % (out.decode(errors="replace").splitlines()[0] if rc == 0 else "MISSING/ERROR " + err.decode(errors="replace")[:160]))
+    L("mediamtx: %s" % ("ok" if os.path.exists(MEDIAMTX) else "MISSING " + MEDIAMTX))
+    L("cloudflared: %s" % ("ok" if os.path.exists(CLOUDFLARED) else "missing (off-LAN sharing only)"))
+    # sources
+    try: mons = monitors()
+    except Exception as e: mons = []; L("monitors() ERROR: %s" % e)
+    try: wins = windows()
+    except Exception as e: wins = []; L("windows() ERROR: %s" % e)
+    try: cams = cameras()
+    except Exception as e: cams = []; L("cameras() ERROR: %s" % e)
+    L("sources: %d monitors, %d windows, %d cameras" % (len(mons), len(wins), len(cams)))
+    for m in mons: L("   monitor %s %s%s" % (m["name"], m["geom"], " *primary" if m.get("primary") else ""))
+    for c in cams: L("   camera  %s" % c["name"])
+    # encoders
+    avail = _ffmpeg_encoders()
+    for name in ["h264_nvenc", "h264_qsv", "h264_amf", "h264_vaapi", "libx264"]:
+        if name in avail:
+            L("   probe %-12s %s" % (name, "WORKS" if _probe_encoder(name) else "fails"))
+    L("chosen encoder: %s" % _working_encoder())
+    # real capture + encode (primary monitor, 2s) — the actual share pipeline
+    geom = (next((m for m in mons if m.get("primary")), mons[0])["geom"] if mons else None)
+    if geom:
+        mm = re.match(r"(\d+)x(\d+)\+(\d+)\+(\d+)", geom); w, h, x, y = mm.groups()
+        outp = os.path.join(tempfile.gettempdir(), "rp-selftest.mp4")
+        if IS_WIN:
+            cap = ["-f", "gdigrab", "-framerate", "15", "-offset_x", x, "-offset_y", y,
+                   "-video_size", "%sx%s" % (w, h), "-i", "desktop"]
+        else:
+            cap = ["-f", "x11grab", "-framerate", "15", "-video_size", "%sx%s" % (w, h),
+                   "-i", "%s+%s,%s" % (DISPLAY, x, y)]
+        name, in_args, enc_args = pick_encoder()
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"] + cap + _apply_scale(in_args) + enc_args + ["-t", "2", outp]
+        rc, o, e = _run(cmd, timeout=60)
+        if rc == 0 and os.path.exists(outp) and os.path.getsize(outp) > 1000:
+            L("capture+encode: PASS (%d bytes, streams: %s)" % (os.path.getsize(outp), _ffprobe_streams(outp)))
+        else:
+            L("capture+encode: FAIL rc=%d :: %s" % (rc, e.decode(errors="replace")[:400]))
+            L("   cmd was: %s" % " ".join(cmd))
+    else:
+        L("capture+encode: SKIP (no monitor)")
+    # audio
+    if IS_WIN:
+        try:
+            import pyaudiowpatch  # noqa: F401
+            rms, info = _win_audio_rms()
+            if rms is None:
+                L("audio: pyaudiowpatch OK but %s" % info)
+            else:
+                L("audio: WASAPI loopback %s, level RMS=%.0f -> %s" % (info, rms, "SILENT (nothing playing?)" if rms < 5 else "CAPTURING"))
+        except Exception as ex:
+            L("audio: pyaudiowpatch MISSING (%s) -> python -m pip install pyaudiowpatch" % ex)
+    else:
+        L("audio: pulse monitor = %s" % (_pulse_monitor() or "NONE"))
+    ai, win_pcm = _audio_input()
+    L("audio input args: %s" % (" ".join(ai) if ai else "[] (none -> video only)"))
+    L("=== self-test done ===")
+
+
 def main():
     srv = HTTPServer(("127.0.0.1", PORT), H)
     def shutdown(*a):
@@ -1156,4 +1262,7 @@ def main():
     srv.serve_forever()
 
 
-main()
+if "--selftest" in sys.argv or "--diag" in sys.argv:
+    selftest()
+else:
+    main()
