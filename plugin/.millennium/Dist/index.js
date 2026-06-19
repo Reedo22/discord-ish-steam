@@ -8,6 +8,62 @@
 (function () {
   window.__DISCORDISH_LOADED__ = (window.__DISCORDISH_LOADED__ || 0) + 1;
 
+  // ===== Fix Steam's "does nothing" noise cancellation (portable, no virtual device) =====
+  // Steam voice captures the mic via CEF WebRTC getUserMedia, but builds its audio
+  // constraints with the DEPRECATED goog*/moz* flags only — e.g. {optional:[{googNoiseSupression}
+  // (sic, one 'p'),{googNoiseSupression2},{mozNoiseSuppression},...]}. Modern Chromium/CEF
+  // removed those, so they're no-ops → NS never engages (the user's toggle "does basically
+  // nothing"). The STANDARD keys (noiseSuppression/echoCancellation/autoGainControl) are what
+  // CEF actually honors. We wrap getUserMedia, read the user's intent from Steam's legacy flags,
+  // and set the matching standard keys. Pure JS in the same context as the voice store → works
+  // identically on Windows/Linux/Mac, no audio device involved. (echoCancellation already had a
+  // standard key in Steam's list; NS + AGC did not — those are the ones this actually turns on.)
+  (function patchMicNoiseCancellation() {
+    if (window.__ds_nc_patched) return;
+    var md = navigator.mediaDevices;
+    if (!md || !md.getUserMedia) return;
+    var orig = md.getUserMedia.bind(md);
+    function normAudio(a) {
+      if (!a || a === true) return a;            // bare {audio:true} already gets CEF defaults
+      // Rebuild a CLEAN modern constraint from Steam's legacy {optional:[...]} object: extract
+      // the user's intent (NS/EC/AGC) AND the selected mic (Steam pushes {sourceId:<id>} — the
+      // legacy device key the modern API ignores, so we remap it to deviceId or the wrong mic
+      // gets used). Standard keys are what modern CEF actually honors.
+      var want = {};
+      var scan = function (o) {
+        if (!o || typeof o !== "object") return;
+        Object.keys(o).forEach(function (k) {
+          var lk = k.toLowerCase(), v = o[k];
+          if (lk.indexOf("noisesup") >= 0) want.noiseSuppression = !!v;        // goog/moz NoiseSup(p)ression
+          else if (lk.indexOf("echocancellation") >= 0) want.echoCancellation = !!v;
+          else if (lk.indexOf("autogaincontrol") >= 0) want.autoGainControl = !!v;
+          else if (lk === "sourceid" || lk === "deviceid") { if (v) want.deviceId = v; }  // preserve selected mic
+        });
+      };
+      scan(a); scan(a.mandatory);
+      if (Array.isArray(a.optional)) a.optional.forEach(scan);
+      // honour any already-standard top-level keys the caller set (don't clobber them)
+      ["noiseSuppression", "echoCancellation", "autoGainControl", "deviceId", "sampleRate", "channelCount"]
+        .forEach(function (k) { if (a[k] !== undefined && want[k] === undefined) want[k] = a[k]; });
+      return want;
+    }
+    md.getUserMedia = function (c) {
+      try { if (c && c.audio) c.audio = normAudio(c.audio); } catch (e) {}
+      return orig(c);
+    };
+    // Steam calls the LEGACY callback form (navigator.getUserMedia({...}, ok, err); it sets
+    // navigator.getUserMedia = navigator.getUserMedia || webkitGetUserMedia || ... at call time,
+    // so seeding both with our shim wins the `||`). Route legacy through the modern pipeline.
+    var legacy = function (c, ok, err) {
+      try { if (c && c.audio) c.audio = normAudio(c.audio); } catch (e) {}
+      return orig(c).then(ok, err);
+    };
+    try { navigator.getUserMedia = legacy; } catch (e) {}
+    try { navigator.webkitGetUserMedia = legacy; } catch (e) {}
+    window.__ds_nc_patched = true;
+    try { console.log("[ds] mic NC patch active (standard WebRTC constraints injected)"); } catch (e) {}
+  })();
+
   function friendsDocs() {
     var pm = window.g_PopupManager;
     if (!pm || typeof pm.GetPopups !== "function") return [];
@@ -1122,7 +1178,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 53;
+  var VERSION = 54;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {

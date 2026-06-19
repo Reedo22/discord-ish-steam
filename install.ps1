@@ -6,6 +6,8 @@
 # (rp-webrtc.py): a localhost service that captures a monitor/window (ffmpeg gdigrab +
 # NVENC/QSV), publishes via MediaMTX, and serves WebRTC/WHEP to the viewer's plugin.
 $ErrorActionPreference = "Stop"
+# Old PowerShell/.NET defaults to TLS 1.0 -> GitHub refuses -> clones/downloads fail.
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
 $repoUrl = "https://github.com/Reedo22/discord-ish-steam"
 $repo = Join-Path $env:USERPROFILE "discord-ish-steam"
@@ -125,9 +127,25 @@ $pyExe = Get-RealPyExe
 if (-not $pyExe) { Write-Warning "Real Python still not found (Store stub?) - reopen the terminal, or disable the python App Execution Aliases (Settings > Apps > Advanced app settings), then re-run." }
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { Write-Warning "ffmpeg still not on PATH - reopen the terminal / reboot so the daemon can find it." }
 
-# 7) fetch the Windows host binaries (MediaMTX + cloudflared) into bin\
-try { & (Join-Path $repo "bin\fetch-windows.ps1") }
+# 6b) desktop-audio capture needs pyaudiowpatch (WASAPI loopback, no driver). pip is
+# idempotent, so this runs every install/update and self-heals a missing/old package.
+if ($pyExe) {
+    Write-Host "Ensuring pyaudiowpatch (desktop-audio capture)..."
+    try {
+        & $pyExe -m pip install --upgrade --disable-pip-version-check pyaudiowpatch 2>&1 | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "pip exit $LASTEXITCODE" }
+    } catch { Write-Warning "pyaudiowpatch install failed ($($_.Exception.Message)) - screen share works but WITHOUT audio until 'python -m pip install pyaudiowpatch' succeeds." }
+}
+
+# 7) fetch the Windows host binaries (MediaMTX + cloudflared) into bin\ - runs every time;
+# fetch-windows.ps1 is idempotent (keeps present binaries, (re)fetches missing ones).
+try { & (Join-Path $repo "bin\fetch-windows.ps1") | Out-Host }
 catch { Write-Warning "Couldn't fetch host binaries ($($_.Exception.Message)). Re-run bin\fetch-windows.ps1 later; theme/plugin still installed." }
+# Verify the binaries actually landed (the earlier failure mode was a silent partial fetch).
+$mtxOk = Test-Path (Join-Path $repo "bin\mediamtx.exe")
+$cfOk  = Test-Path (Join-Path $repo "bin\cloudflared.exe")
+if (-not $mtxOk) { Write-Warning "mediamtx.exe missing - self-preview + LAN sharing won't work. Re-run: .\bin\fetch-windows.ps1" }
+if (-not $cfOk)  { Write-Host "  (cloudflared.exe absent - off-LAN sharing disabled; LAN sharing still works.)" }
 
 # 8) register a logon task so the daemon is always up (mirrors the Linux systemd service)
 if ($pyExe) {
@@ -157,5 +175,21 @@ if ($pyExe) {
     Write-Host "Started the screen-share daemon."
 }
 
+# Dependency summary — re-running the installer is the "updater"; this shows what's present.
+function Test-Dep($name, $present) {
+    if ($present) { Write-Host ("  [ok]   {0}" -f $name) }
+    else          { Write-Warning ("[miss] {0}" -f $name) }
+}
+$pyaudioOk = $false
+if ($pyExe) { try { & $pyExe -c "import pyaudiowpatch" 2>$null; $pyaudioOk = ($LASTEXITCODE -eq 0) } catch {} }
+Write-Host ""
+Write-Host "Dependency check:"
+Test-Dep "Python"           ([bool]$pyExe)
+Test-Dep "ffmpeg"           ([bool](Get-Command ffmpeg -ErrorAction SilentlyContinue))
+Test-Dep "pyaudiowpatch (audio)" $pyaudioOk
+Test-Dep "mediamtx.exe"     (Test-Path (Join-Path $repo "bin\mediamtx.exe"))
+Test-Dep "cloudflared.exe (off-LAN)" (Test-Path (Join-Path $repo "bin\cloudflared.exe"))
+
 Write-Host ""
 Write-Host "DONE. Now: 1) fully restart Steam,  2) Friends settings -> enable 'Dock chats to the friends list'."
+Write-Host "Re-run this installer any time to update + auto-install anything missing."
