@@ -474,12 +474,15 @@ def _audio_input():
     if not AUDIO:
         return [], False
     if IS_WIN:
-        try:
-            import pyaudiowpatch  # noqa: F401  (presence check only)
-        except Exception:
-            sys.stderr.write("[audio] pyaudiowpatch not installed -> video only (pip install pyaudiowpatch)\n")
+        dev = _wasapi_device()
+        if not dev:
+            sys.stderr.write("[audio] no WASAPI loopback device (pyaudiowpatch missing?) -> video only\n")
             return [], False
-        return (["-f", "s16le", "-ar", "48000", "-ac", "2", "-thread_queue_size", "1024", "-i", "pipe:0"], True)
+        # ffmpeg MUST be told the loopback's NATIVE rate/channels — the feeder opens the device
+        # at those and a mismatch garbles (or, if we forced 48k/2ch on a 44.1k/6ch device,
+        # p.open() throws and we'd get permanent silence).
+        return (["-f", "s16le", "-ar", str(dev["rate"]), "-ac", str(dev["ch"]),
+                 "-thread_queue_size", "1024", "-i", "pipe:0"], True)
     mon = _pulse_monitor()
     if not mon:
         sys.stderr.write("[audio] no pulse monitor found -> video only\n")
@@ -487,13 +490,15 @@ def _audio_input():
     return (["-f", "pulse", "-thread_queue_size", "1024", "-i", mon], False)
 
 
-def _wasapi_loopback_feed(proc):
-    """Windows: capture the default output's WASAPI loopback (48k stereo s16) and pipe it to
-    the encoder's stdin. On any error, write silence so ffmpeg's pipe:0 input never stalls
-    (a stalled audio input would freeze the whole stream)."""
-    silence = b"\x00" * 4096
+def _wasapi_device():
+    """Windows: resolve the loopback device for the default output sink and its NATIVE format.
+    Returns {"index","rate","ch"} or None. The rate/channels here MUST match what ffmpeg is
+    told (see _audio_input) — WASAPI loopback only opens at the device's own rate/channels."""
     try:
         import pyaudiowpatch as pa
+    except Exception:
+        return None
+    try:
         p = pa.PyAudio()
         loop = None
         try:
@@ -509,11 +514,36 @@ def _wasapi_loopback_feed(proc):
             for d in p.get_loopback_device_info_generator():
                 loop = d
                 break
-        stream = p.open(format=pa.paInt16, channels=2, rate=48000, frames_per_buffer=1024,
-                        input=True, input_device_index=(loop["index"] if loop else None))
+        if loop is None:
+            p.terminate(); return None
+        info = {"index": int(loop["index"]),
+                "rate": int(round(loop.get("defaultSampleRate", 48000) or 48000)),
+                "ch": int(loop.get("maxInputChannels", 2) or 2)}
+        p.terminate()
+        return info
+    except Exception as e:
+        sys.stderr.write("[audio] WASAPI device probe failed (%s)\n" % e)
+        return None
+
+
+def _wasapi_loopback_feed(proc):
+    """Windows: capture the default output's WASAPI loopback at its NATIVE rate/channels and
+    pipe s16 PCM to the encoder's stdin. On any error, write silence so ffmpeg's pipe:0 input
+    never stalls (a stalled audio input would freeze the whole stream)."""
+    dev = _wasapi_device()
+    rate = dev["rate"] if dev else 48000
+    ch = dev["ch"] if dev else 2
+    frames = 1024
+    silence = b"\x00" * (frames * ch * 2)   # s16 = 2 bytes/sample
+    try:
+        import pyaudiowpatch as pa
+        p = pa.PyAudio()
+        stream = p.open(format=pa.paInt16, channels=ch, rate=rate, frames_per_buffer=frames,
+                        input=True, input_device_index=(dev["index"] if dev else None))
+        sys.stderr.write("[audio] WASAPI loopback @ %dHz %dch\n" % (rate, ch))
         while proc.poll() is None:
             try:
-                data = stream.read(1024, exception_on_overflow=False)
+                data = stream.read(frames, exception_on_overflow=False)
             except Exception:
                 data = silence
             try:
@@ -561,7 +591,15 @@ def start_fmp4(geom=None, win=None):
            + cap_in + audio_in + in_args + venc + aud_out + FMP4_OUT)
     with ws_lock:
         fmp4_init["seg"] = None
-    p = _spawn(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    # Route ffmpeg's stderr to a log file (not DEVNULL) so a black-screen failure is
+    # actually diagnosable — otherwise the encoder fails silently and we're blind.
+    logp = os.path.join(tempfile.gettempdir(), "rp-fmp4.log")
+    try:
+        errf = open(logp, "wb")
+        errf.write(("[cmd] " + " ".join(cmd) + "\n").encode()); errf.flush()
+    except Exception:
+        errf = subprocess.DEVNULL
+    p = _spawn(cmd, stdout=subprocess.PIPE, stderr=errf,
                stdin=(subprocess.PIPE if win_pcm else subprocess.DEVNULL), env=env)
     state["fmp4"] = p
     if win_pcm:
