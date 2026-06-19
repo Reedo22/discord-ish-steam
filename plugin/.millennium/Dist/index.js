@@ -8,60 +8,144 @@
 (function () {
   window.__DISCORDISH_LOADED__ = (window.__DISCORDISH_LOADED__ || 0) + 1;
 
-  // ===== Fix Steam's "does nothing" noise cancellation (portable, no virtual device) =====
-  // Steam voice captures the mic via CEF WebRTC getUserMedia, but builds its audio
-  // constraints with the DEPRECATED goog*/moz* flags only — e.g. {optional:[{googNoiseSupression}
-  // (sic, one 'p'),{googNoiseSupression2},{mozNoiseSuppression},...]}. Modern Chromium/CEF
-  // removed those, so they're no-ops → NS never engages (the user's toggle "does basically
-  // nothing"). The STANDARD keys (noiseSuppression/echoCancellation/autoGainControl) are what
-  // CEF actually honors. We wrap getUserMedia, read the user's intent from Steam's legacy flags,
-  // and set the matching standard keys. Pure JS in the same context as the voice store → works
-  // identically on Windows/Linux/Mac, no audio device involved. (echoCancellation already had a
-  // standard key in Steam's list; NS + AGC did not — those are the ones this actually turns on.)
-  (function patchMicNoiseCancellation() {
+  // ===== Our own STRONG noise cancellation (RNNoise/WASM) — portable, no virtual device =====
+  // Steam captures the mic via CEF WebRTC getUserMedia. Its own NC only ever set the DEAD
+  // goog*/moz* constraint flags (removed from modern Chromium = no-op), which is why the toggle
+  // "does basically nothing". Rather than rely on CEF's mild built-in NS, we run RNNoise (the
+  // engine Krisp-style NC is benchmarked on) as an AudioWorklet inserted into the mic stream at
+  // the same getUserMedia interception point: get the raw mic -> WebAudio graph
+  // (MediaStreamSource -> RNNoise worklet -> MediaStreamDestination) -> hand the PROCESSED stream
+  // to Steam, which sends it over its peer connection. Pure JS/WASM in the voice store's context
+  // -> identical on Windows/Linux/Mac, zero audio devices. Fail-safe: ANY error -> raw mic, so
+  // voice never breaks. Toggle via localStorage 'ds_rnnoise' ('0' = off, falls back to fixing
+  // Steam's native NS via standard constraints).
+  (function patchMic() {
     if (window.__ds_nc_patched) return;
     var md = navigator.mediaDevices;
     if (!md || !md.getUserMedia) return;
     var orig = md.getUserMedia.bind(md);
+
+    var RNN_NAME = "@sapphi-red/web-noise-suppressor/rnnoise";
+    // vendored in our repo (primary; same fetch path as the live CSS) + CDN fallback.
+    var SRC = [
+      { worklet: "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/rnnoise/workletProcessor.js",
+        wasm:    "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/rnnoise/rnnoise.wasm" },
+      { worklet: "https://cdn.jsdelivr.net/npm/@sapphi-red/web-noise-suppressor@0.3.5/dist/rnnoise/workletProcessor.js",
+        wasm:    "https://cdn.jsdelivr.net/npm/@sapphi-red/web-noise-suppressor@0.3.5/dist/rnnoise.wasm" }
+    ];
+    function rnnEnabled() { try { return localStorage.getItem("ds_rnnoise") !== "0"; } catch (e) { return true; } }
+
+    // Map Steam's legacy {optional:[...]} audio constraint to a clean MODERN constraint. Steam
+    // only emits the dead goog*/moz* NS/AGC spellings + {sourceId:<mic>} (legacy device key the
+    // modern API ignores). We extract intent + remap sourceId->deviceId so the selected mic and
+    // the user's EC/AGC/NS choices survive.
     function normAudio(a) {
-      if (!a || a === true) return a;            // bare {audio:true} already gets CEF defaults
-      // Rebuild a CLEAN modern constraint from Steam's legacy {optional:[...]} object: extract
-      // the user's intent (NS/EC/AGC) AND the selected mic (Steam pushes {sourceId:<id>} — the
-      // legacy device key the modern API ignores, so we remap it to deviceId or the wrong mic
-      // gets used). Standard keys are what modern CEF actually honors.
+      if (!a || a === true) return a;
       var want = {};
       var scan = function (o) {
         if (!o || typeof o !== "object") return;
         Object.keys(o).forEach(function (k) {
           var lk = k.toLowerCase(), v = o[k];
-          if (lk.indexOf("noisesup") >= 0) want.noiseSuppression = !!v;        // goog/moz NoiseSup(p)ression
+          if (lk.indexOf("noisesup") >= 0) want.noiseSuppression = !!v;
           else if (lk.indexOf("echocancellation") >= 0) want.echoCancellation = !!v;
           else if (lk.indexOf("autogaincontrol") >= 0) want.autoGainControl = !!v;
-          else if (lk === "sourceid" || lk === "deviceid") { if (v) want.deviceId = v; }  // preserve selected mic
+          else if (lk === "sourceid" || lk === "deviceid") { if (v) want.deviceId = v; }
         });
       };
       scan(a); scan(a.mandatory);
       if (Array.isArray(a.optional)) a.optional.forEach(scan);
-      // honour any already-standard top-level keys the caller set (don't clobber them)
       ["noiseSuppression", "echoCancellation", "autoGainControl", "deviceId", "sampleRate", "channelCount"]
         .forEach(function (k) { if (a[k] !== undefined && want[k] === undefined) want[k] = a[k]; });
       return want;
     }
-    md.getUserMedia = function (c) {
-      try { if (c && c.audio) c.audio = normAudio(c.audio); } catch (e) {}
-      return orig(c);
-    };
-    // Steam calls the LEGACY callback form (navigator.getUserMedia({...}, ok, err); it sets
-    // navigator.getUserMedia = navigator.getUserMedia || webkitGetUserMedia || ... at call time,
-    // so seeding both with our shim wins the `||`). Route legacy through the modern pipeline.
-    var legacy = function (c, ok, err) {
-      try { if (c && c.audio) c.audio = normAudio(c.audio); } catch (e) {}
-      return orig(c).then(ok, err);
-    };
+
+    // Load the worklet module + wasm ONCE (cached promise). Tries each source in order; fetches
+    // the worklet as text -> Blob URL (addModule needs a same-origin/CORS-clean URL).
+    function rnnReady() {
+      if (window.__ds_rnn_ready) return window.__ds_rnn_ready;
+      window.__ds_rnn_ready = (async function () {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC || typeof AudioWorkletNode === "undefined") throw new Error("no AudioWorklet");
+        var ctx = window.__ds_rnn_ctx || new AC({ sampleRate: 48000 });   // RNNoise is 48k
+        window.__ds_rnn_ctx = ctx;
+        var lastErr;
+        for (var i = 0; i < SRC.length; i++) {
+          try {
+            var js = await (await fetch(SRC[i].worklet, { cache: "force-cache" })).text();
+            var url = URL.createObjectURL(new Blob([js], { type: "text/javascript" }));
+            await ctx.audioWorklet.addModule(url);
+            try { URL.revokeObjectURL(url); } catch (e) {}
+            var wasm = await (await fetch(SRC[i].wasm, { cache: "force-cache" })).arrayBuffer();
+            if (!(wasm && wasm.byteLength > 1000)) throw new Error("bad wasm");
+            console.log("[ds] RNNoise loaded (source #" + (i + 1) + ")");
+            return { ctx: ctx, wasm: wasm };
+          } catch (e) { lastErr = e; console.warn("[ds] RNNoise source #" + (i + 1) + " failed", e); }
+        }
+        throw lastErr || new Error("no RNNoise source reachable");
+      })();
+      return window.__ds_rnn_ready;
+    }
+
+    // keep at most one active graph; tear down the previous on a new capture / track end.
+    function teardown() {
+      var g = window.__ds_rnn_active; if (!g) return; window.__ds_rnn_active = null;
+      try { g.src.disconnect(); } catch (e) {}
+      try { g.node.port.postMessage("destroy"); } catch (e) {}
+      try { g.node.disconnect(); } catch (e) {}
+      try { g.raw.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+    }
+
+    async function processStream(raw) {
+      var r = await rnnReady();
+      var ctx = r.ctx;
+      if (ctx.state === "suspended") { try { await ctx.resume(); } catch (e) {} }
+      teardown();
+      var src = ctx.createMediaStreamSource(raw);
+      var node = new AudioWorkletNode(ctx, RNN_NAME, {
+        processorOptions: { wasmBinary: r.wasm, maxChannels: 1 },
+        channelCount: 1, channelCountMode: "explicit",
+        numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1]
+      });
+      var dest = ctx.createMediaStreamDestination();
+      src.connect(node); node.connect(dest);
+      window.__ds_rnn_active = { ctx: ctx, src: src, node: node, dest: dest, raw: raw };
+      var out = new MediaStream();
+      dest.stream.getAudioTracks().forEach(function (t) { out.addTrack(t); });
+      raw.getVideoTracks().forEach(function (t) { out.addTrack(t); });
+      out.getAudioTracks().forEach(function (t) { t.addEventListener("ended", teardown); });
+      return out;
+    }
+
+    // Build the raw-capture constraints: when RNNoise is on, turn OFF the browser's own NS so the
+    // two don't fight (double-processing = artifacts); keep EC/AGC. When off, normAudio's standard
+    // keys at least make Steam's native NS actually engage.
+    function rawConstraints(c) {
+      var a = normAudio(c.audio);
+      if (a && typeof a === "object" && rnnEnabled()) a.noiseSuppression = false;
+      var cc = {}; for (var k in c) cc[k] = c[k]; cc.audio = a; return cc;
+    }
+
+    async function capture(c) {
+      var wantAudio = !!(c && c.audio);
+      var cc = wantAudio ? rawConstraints(c) : c;
+      var raw = await orig(cc);
+      if (wantAudio && rnnEnabled()) {
+        try { return await processStream(raw); }
+        catch (e) { console.warn("[ds] RNNoise unavailable -> raw mic (Steam native NS)", e); return raw; }
+      }
+      return raw;
+    }
+
+    md.getUserMedia = function (c) { return capture(c); };
+    // Steam uses the LEGACY callback form: navigator.getUserMedia({...}, ok, err), assigned via
+    // `navigator.getUserMedia || webkitGetUserMedia || ...` at call time -> seeding both wins it.
+    var legacy = function (c, ok, err) { return capture(c).then(ok, err); };
     try { navigator.getUserMedia = legacy; } catch (e) {}
     try { navigator.webkitGetUserMedia = legacy; } catch (e) {}
+    // expose a quick toggle for the console / future UI
+    window.dsNoiseCancellation = function (on) { try { localStorage.setItem("ds_rnnoise", on ? "1" : "0"); } catch (e) {} return rnnEnabled(); };
     window.__ds_nc_patched = true;
-    try { console.log("[ds] mic NC patch active (standard WebRTC constraints injected)"); } catch (e) {}
+    console.log("[ds] mic NC patch active; RNNoise " + (rnnEnabled() ? "ON (strong)" : "off -> native NS fix"));
   })();
 
   function friendsDocs() {
@@ -1178,7 +1262,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 54;
+  var VERSION = 55;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
