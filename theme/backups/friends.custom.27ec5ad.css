@@ -568,65 +568,6 @@ html.discordish-incall .chatHeader .ChatMessageEntryVoice { display: none !impor
 .discordish-stage.minimized .ds-name { display: none !important; }
 .discordish-stage.minimized .ds-controls { margin-bottom: 10px !important; padding: 6px 10px !important; gap: 8px !important; }
 .discordish-stage.minimized .ds-btn { width: 36px !important; height: 36px !important; font-size: 16px !important; }
-/* ============================ Discord parity pass ============================
-   From comparing our reskin side-by-side against Discord's current dark theme.
-   The palette/layout were already accurate; what still read as "Steam" was the
-   typeface, roster row proportions, message reading size, and the missing green
-   Add-Friend pill. Isolated here so it diffs cleanly vs the pre-parity backup
-   (theme/backups/). Real selectors per docs/recon-friends-dom.md. */
-
-/* Typeface — the single biggest tell. Discord's UI font is "gg sans" (not
-   redistributable); its own fallback chain lands on Helvetica Neue / Arial, which
-   reads far closer to Discord than Steam's Motiva Sans. Scope to the friends
-   window so the rest of Steam is untouched. */
-.chat.singlewindow,
-.chat.singlewindow input,
-.chat.singlewindow textarea,
-.friendsListContainer {
-  font-family: "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
-  -webkit-font-smoothing: antialiased !important;
-}
-
-/* Roster rows — Discord rows are roomier (~42px) with a 16px medium name and a
-   13px muted status line under it. Steam's were tight (4px pad). */
-.friendlistListContainer .friend {
-  padding: 5px 8px !important;
-  min-height: 42px !important;
-  align-items: center !important;
-}
-.labelHolder .nOdcT-MoOaXGePXLyPe0H,
-.playerName { font-size: 16px !important; font-weight: 500 !important; }
-.labelHolder ._2Ri005Wg_uXDTa71kdRbcN { font-size: 13px !important; }
-
-/* Message reading size — Discord body copy is ~16px / 1.375 line-height; Steam's
-   was a touch small and tight. */
-.msg { font-size: 15px !important; line-height: 1.375 !important; }
-
-/* Section titles ("DIRECT MESSAGES"-style) — Discord uses 12px semibold w/ tracking. */
-.groupChatSectionTitle {
-  font-size: 12px !important;
-  font-weight: 600 !important;
-  letter-spacing: .02em !important;
-}
-
-/* Add-Friend — Discord's signature green pill (var(--green-360), white text).
-   Steam shows a plain icon/text button; make it the recognizable green CTA. */
-.addFriendButton {
-  background: #248046 !important;
-  color: #fff !important;
-  border: none !important;
-  border-radius: 6px !important;
-  padding: 6px 14px !important;
-  font-weight: 600 !important;
-  font-size: 13px !important;
-}
-.addFriendButton:hover { background: #1a6334 !important; }
-.addFriendButton svg, .addFriendButton path { fill: #fff !important; }
-
-/* Search icon — Discord renders it as a muted ghost icon that brightens on hover. */
-.searchIconButton { color: var(--dc-muted) !important; background: transparent !important; }
-.searchIconButton:hover { color: var(--dc-bright) !important; }
-
 /* ---------- Scrollbars ---------- */
 .chatHistoryScroll::-webkit-scrollbar,
 .FriendsListContent::-webkit-scrollbar { width: 8px !important; }
