@@ -740,9 +740,11 @@
     var sprev = el(doc, "video"); sprev.className = "ds-share-preview";
     sprev.autoplay = true; sprev.muted = true; sprev.playsInline = true; sprev.style.display = "none";
     spop.appendChild(sprev);
-    // Resolution + bitrate: these drive OUR daemon encode (via /start?h=&br=). Changing one
-    // mid-share re-calls /start (the daemon restarts ffmpeg with the new params, ~1s); the
-    // viewer's WS auto-reconnects, so it applies live with NO Steam restart.
+    // Resolution / bitrate / fps / audio: these drive OUR daemon encode (via /start?h=&br=&fps=
+    // &audio=). Changing one mid-share re-calls /start (daemon restarts ffmpeg with the new
+    // params, ~1s) and RE-SIGNALS the viewer so it re-syncs — important for the audio toggle
+    // (the codec string changes avc1 <-> avc1+mp4a), harmless for the rest. The viewer's WS also
+    // auto-reconnects. All live, NO Steam restart. (Re-signaling is silent — see patchSilenceSignals.)
     var opts = window.__ds_share_opts;
     var addShareSel = function (label, key, items) {
       var row = el(doc, "div", "ds-vs-row");
@@ -753,8 +755,13 @@
       sel.addEventListener("change", function () {
         opts[key] = sel.value;
         try { localStorage.setItem("ds_share_opts", JSON.stringify(opts)); } catch (e) {}
-        if (window.__ds_share_mode === "webrtc") {     // apply live: restart capture, bounce self-preview
-          wStartShare(window.__ds_share_geom).then(function () { if (sprev) sprev.dataset.live = ""; });
+        if (window.__ds_share_mode === "webrtc") {     // apply live: restart capture + re-signal viewer
+          if (sstatus) sstatus.textContent = "Applying " + label + "…";
+          wStartShare(window.__ds_share_geom).then(function () {
+            if (sprev) sprev.dataset.live = "";
+            if (window.__ds_share_url) { try { sendSignal(doc, sigPayload(window.__ds_share_url, window.__ds_share_ice, window.__ds_share_ws, window.__ds_share_audio)); } catch (e) {} }
+            try { srefresh(); } catch (e) {}
+          });
         }
       });
       row.appendChild(lb); row.appendChild(sel); spop.appendChild(row);
@@ -1047,11 +1054,34 @@
       if (fc && fc.SendChatMessageInternal) fc.SendChatMessageInternal(SIG + payload);
     } catch (e) { console.warn("[ds] sendSignal", e); }
   }
+  // Silence our screen-share signaling messages so start/stop don't ping the friend (sound +
+  // unread + toast). Steam already has a gate for this — BShouldSilentlyAddMessage(e) returns
+  // true to add a message WITHOUT notifying (used for blocked users). We extend it on the
+  // friend-chat prototype to also return true for SIG-prefixed messages. One-time, and degrades
+  // gracefully (just keeps notifying) if Steam ever renames the method.
+  function patchSilenceSignals(fc) {
+    try {
+      var proto = Object.getPrototypeOf(fc);
+      if (!proto || typeof proto.BShouldSilentlyAddMessage !== "function" || proto.__ds_silenced) return;
+      var orig = proto.BShouldSilentlyAddMessage;
+      proto.BShouldSilentlyAddMessage = function (e) {
+        try {
+          var t = e && (e.strMessageInternal || e.message || "");
+          if (typeof t === "string" && t.indexOf(SIG) === 0) return true;   // our signaling -> silent
+        } catch (_) {}
+        return orig.apply(this, arguments);
+      };
+      proto.__ds_silenced = true;
+      window.__ds_silence_patched = true;
+      console.log("[ds] screen-share signaling silenced (no start/stop notifications)");
+    } catch (e) {}
+  }
   function pollSignals() {
     try {
       var app = window.g_FriendsUIApp, fs = app.m_FriendStore, cs = app.m_ChatStore;
       (fs.all_friends || []).forEach(function (f) {
         var fc = cs.GetFriendChat(f.m_unAccountID);
+        if (fc && !window.__ds_silence_patched) patchSilenceSignals(fc);   // one-time prototype patch
         var msgs = fc && fc.m_rgChatMessages;
         if (!msgs || !msgs.length) return;
         for (var i = msgs.length - 1; i >= 0 && i >= msgs.length - 6; i--) {
@@ -1262,7 +1292,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 55;
+  var VERSION = 56;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
