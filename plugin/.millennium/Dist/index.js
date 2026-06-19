@@ -185,6 +185,7 @@
     // src = "win:0x.." (per-app, occlusion-proof) | "geom:WxH+X+Y" or bare "WxH+X+Y" (monitor)
     var params = [];
     if (src && src.indexOf("win:") === 0) params.push("win=" + encodeURIComponent(src.slice(4)));
+    else if (src && src.indexOf("cam:") === 0) params.push("cam=" + encodeURIComponent(src.slice(4)));
     else if (src) params.push("geom=" + encodeURIComponent(src.indexOf("geom:") === 0 ? src.slice(5) : src));
     // resolution/bitrate from the share-panel dropdowns (live encode overrides)
     var o = window.__ds_share_opts || {};
@@ -584,6 +585,10 @@
           var o = doc.createElement("option"); o.value = "win:" + wn.id;
           o.textContent = "🪟 " + (wn.title.length > 32 ? wn.title.slice(0, 32) + "…" : wn.title); ssrc.appendChild(o);
         });
+        (j.cameras || []).forEach(function (cm) {
+          var o = doc.createElement("option"); o.value = "cam:" + cm.id;
+          o.textContent = "📷 " + (cm.name.length > 32 ? cm.name.slice(0, 32) + "…" : cm.name); ssrc.appendChild(o);
+        });
         if (window.__ds_share_geom) ssrc.value = window.__ds_share_geom;
         if (!ssrc.value && ssrc.options.length) ssrc.value = ssrc.options[0].value;
         window.__ds_share_geom = ssrc.value || window.__ds_share_geom;
@@ -616,7 +621,7 @@
     };
     addShareSel("Resolution", "h", [["Auto", "auto"], ["4K", "2160"], ["1440p", "1440"], ["1080p", "1080"], ["720p", "720"], ["480p", "480"]]);
     addShareSel("Bitrate", "br", [["Potato (0.5M)", "0.5M"], ["Low (1M)", "1M"], ["Smooth (1.5M)", "1.5M"], ["Balanced (3M)", "3M"], ["Sharp (6M)", "6M"]]);
-    addShareSel("FPS", "fps", [["15 fps", "15"], ["20 fps", "20"], ["30 fps", "30"]]);
+    addShareSel("FPS", "fps", [["15 fps", "15"], ["20 fps", "20"], ["30 fps", "30"], ["60 fps", "60"]]);
     addShareSel("Audio", "audio", [["On", "on"], ["Off", "off"]]);
     var sgo = el(doc, "button", "ds-stream-go"); spop.appendChild(sgo);
     var srefresh = function () {
@@ -1117,7 +1122,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 52;
+  var VERSION = 53;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {

@@ -560,13 +560,15 @@ def _wasapi_loopback_feed(proc):
                 break
 
 
-def start_fmp4(geom=None, win=None):
+def start_fmp4(geom=None, win=None, cam=None):
     """Start the fragmented-MP4 encode for the WS path and pump it to ws_broadcast.
     Runs alongside the RTSP/WHEP capture so the viewer can use either transport.
     Muxes desktop audio (AAC) when available — Linux pulse monitor / Windows WASAPI loopback."""
     in_args, venc = _fmp4_enc_args()
     env = _cap_env()
-    if IS_WIN and win:
+    if cam:
+        cap_in = _camera_cap_in(cam)
+    elif IS_WIN and win:
         cap_in = ["-f", "gdigrab", "-draw_mouse", "1", "-framerate", FPS, "-i", "title=%s" % win]
     elif win and not IS_WIN:
         m = monitors(); g = (next((x for x in m if x["primary"]), m[0])["geom"] if m else "1920x1080+0+0")
@@ -733,6 +735,53 @@ def windows():
     return out
 
 
+def cameras():
+    """Webcams available for camera-share. Linux=v4l2 (/dev/video*), Windows=dshow video
+    devices. De-duped by name (Linux exposes metadata nodes at higher indices with the same
+    name; keep the lowest = the capture node)."""
+    out = []
+    if IS_WIN:
+        try:
+            r = subprocess.run(["ffmpeg", "-hide_banner", "-f", "dshow",
+                                "-list_devices", "true", "-i", "dummy"],
+                               capture_output=True, text=True, timeout=8)
+            for line in r.stderr.splitlines():
+                m = re.search(r'"([^"]+)"\s*\((video)\)', line)
+                if m:
+                    out.append({"id": m.group(1), "name": m.group(1)})
+        except Exception:
+            pass
+        return out
+    try:
+        import glob
+        seen = set()
+        for dev in sorted(glob.glob("/dev/video*"),
+                          key=lambda d: int(re.sub(r"\D", "", d) or 0)):
+            name = dev
+            n = re.sub(r"\D", "", dev)
+            try:
+                with open("/sys/class/video4linux/video%s/name" % n) as f:
+                    name = f.read().strip()
+            except Exception:
+                pass
+            if name in seen:
+                continue
+            seen.add(name)
+            out.append({"id": dev, "name": name})
+    except Exception:
+        pass
+    return out
+
+
+def _camera_cap_in(cam):
+    """ffmpeg input args to capture a webcam. We DON'T force input size/fps — webcams only
+    offer specific modes and forcing an unsupported one errors out; let it negotiate native,
+    then _apply_scale evens/caps the output. Linux=v4l2 (/dev/videoN), Windows=dshow."""
+    if IS_WIN:
+        return ["-f", "dshow", "-i", "video=%s" % cam]
+    return ["-f", "v4l2", "-i", cam]
+
+
 def ensure_mediamtx():
     if state["mtx"] and state["mtx"].poll() is None:
         return
@@ -827,12 +876,22 @@ def _start_win_window(title):
     return True
 
 
-def start_capture(geom=None, win=None):
+def start_capture(geom=None, win=None, cam=None):
     with lock:
         stop_capture()
         ensure_mediamtx()
-        start_fmp4(geom=geom, win=win)
+        start_fmp4(geom=geom, win=win, cam=cam)
         env = _cap_env()
+        if cam:
+            # webcam -> RTSP/WHEP path. Same ffmpeg encode as a monitor, camera input.
+            name, in_args, enc_args = pick_encoder()
+            cmd = (["ffmpeg", "-hide_banner", "-loglevel", "warning"]
+                   + _camera_cap_in(cam) + _apply_scale(in_args) + enc_args
+                   + ["-f", "rtsp", "-rtsp_transport", "tcp", RTSP])
+            state["ff"] = _spawn(cmd, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, env=env)
+            state["geom"] = "cam:" + cam
+            return True
         if win:
             if IS_WIN:
                 return _start_win_window(win)
@@ -895,11 +954,13 @@ class H(BaseHTTPRequestHandler):
         whep = "http://%s:%d/screen/whep" % (ip, WHEP_PORT)
         lan_whep = whep
         if u.path == "/sources":
-            self._send({"monitors": monitors(), "windows": windows(), "encoder": pick_encoder()[0]})
+            self._send({"monitors": monitors(), "windows": windows(),
+                        "cameras": cameras(), "encoder": pick_encoder()[0]})
         elif u.path == "/start":
             win = q.get("win", [None])[0]
             geom = q.get("geom", [None])[0]
-            if not win and not geom:
+            cam = q.get("cam", [None])[0]
+            if not win and not geom and not cam:
                 mons = monitors(); geom = (next((m for m in mons if m["primary"]), mons[0])["geom"] if mons else "1920x1080+0+0")
             # live encode overrides (UI dropdowns) — set before (re)starting the capture.
             global BITRATE, MAX_H, FPS, AUDIO
@@ -919,7 +980,7 @@ class H(BaseHTTPRequestHandler):
                 AUDIO = False
             elif au in ("1", "true", "on"):
                 AUDIO = True
-            ok = start_capture(geom=geom, win=win)
+            ok = start_capture(geom=geom, win=win, cam=cam)
             # local=1 -> skip the tunnel (LAN-only, faster). default -> public https tunnel.
             tun = None if q.get("local", ["0"])[0] == "1" else ensure_tunnel()
             ws_base = (tun.replace("https://", "wss://") if tun
