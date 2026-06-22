@@ -1204,8 +1204,14 @@
                  (p.m_steamid && p.m_steamid.GetAccountID && p.m_steamid.GetAccountID() === tAcct);
         });
         if (fr) {
-          tName = fr.m_strNickname || (fr.m_persona && fr.m_persona.m_strPlayerName) || "";
-          tAvatar = (fr.m_persona && (fr.m_persona.avatar_url_full || fr.m_persona.avatar_url_medium)) || "";
+          var per = fr.m_persona || fr.persona || {};
+          tName = fr.m_strNickname || per.m_strPlayerName || per.persona_name || "";
+          tAvatar = per.avatar_url_full || per.avatar_url_medium || per.avatar_url ||
+                    (typeof per.GetAvatarURL === "function" ? per.GetAvatarURL() : "") || "";
+          if (!tAvatar) {   // some builds only store the 40-char hash; build the CDN URL
+            var h = "" + (per.m_strAvatarHash || per.avatar_hash || per.m_strAvatar || "");
+            if (/^[0-9a-f]{40}$/i.test(h)) tAvatar = "https://avatars.steamstatic.com/" + h.slice(0, 2) + "/" + h + "_full.jpg";
+          }
         }
       } catch (e) {}
       var nameEl = native.querySelector(".nOdcT-MoOaXGePXLyPe0H, [class*=VoiceStatusLab]");
@@ -1218,6 +1224,21 @@
         for (var ii = 0; ii < imgs.length; ii++) { if (imgs[ii].src && imgs[ii].src.indexOf("data:") !== 0) { avatar = imgs[ii].src.replace("_medium", "_full"); break; } }
       }
       if (!avatar) avatar = tAvatar;   // outgoing (or native had no img): resolved target avatar
+      if (!avatar && name) {   // last resort: scrape this friend's avatar <img> from the roster DOM
+        try {
+          var rows = doc.querySelectorAll(".friendlistListContainer .friend, .ChatRoomListGroupItem, .chatWindow");
+          for (var ri = 0; ri < rows.length; ri++) {
+            var rn = rows[ri].querySelector(".nOdcT-MoOaXGePXLyPe0H, [class*=playerName], [class*=friendName]");
+            if (rn && rn.textContent && rn.textContent.trim() === name) {
+              var rimg = rows[ri].querySelector("img.avatar, .avatarHolder img");
+              if (rimg && rimg.src && rimg.src.indexOf("data:") !== 0) { avatar = rimg.src.replace("_medium", "_full"); break; }
+            }
+          }
+        } catch (e) {}
+      }
+      if (!avatar && window.localStorage && localStorage.ds_debug === "1") {   // help diagnose unusual builds
+        try { console.log("[ds] call avatar unresolved; persona keys:", Object.keys((fr && (fr.m_persona || fr.persona)) || {})); } catch (e) {}
+      }
       native.classList.add("ds-native-hidden");         // hide Steam's menu (kept clickable for proxy)
       var ring = main.querySelector(".ds-ring");
       if (existing && existing !== ring) existing.remove();
@@ -1353,7 +1374,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 61;
+  var VERSION = 62;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
