@@ -65,10 +65,10 @@
 .playerName { color: var(--dc-text) !important; font-weight: 600 !important; }
 .labelHolder ._2Ri005Wg_uXDTa71kdRbcN { color: var(--dc-muted) !important; }
 
-/* circular avatars + status ring */
-.avatarHolder, .avatar { border-radius: 50% !important; }
+/* rounded-square avatars (not circular) + status ring */
+.avatarHolder, .avatar { border-radius: 8px !important; }
 /* keep the avatar IMAGE flush inside its holder so the photo lines up with the
-   circular crop / status ring / frame. Steam offsets the <img> a few px inside the
+   rounded crop / status ring / frame. Steam offsets the <img> a few px inside the
    holder, so the "effects" (ring/frame) sit right but the face is shifted — pin the
    image to fill the holder exactly. (Frame <video> is left alone via the rule below.) */
 .avatarHolder { position: relative !important; }
@@ -150,7 +150,7 @@
 }
 .ChatRoomListGroupItem:hover { background: var(--dc-hover) !important; }
 .chatRoomName { color: var(--dc-text) !important; font-weight: 600 !important; }
-.ChatRoomMultiFriendAvatar .MultiAvatar { border-radius: 50% !important; }
+.ChatRoomMultiFriendAvatar .MultiAvatar { border-radius: 6px !important; }
 .createChatRoomButton, .ToggleGroupChatList { color: var(--dc-muted) !important; }
 
 /* hide the "No one else in this voice channel" sidebar notice */
@@ -255,7 +255,7 @@
 .ds-chat-avatar {
   flex: 0 0 28px !important;
   width: 28px !important; height: 28px !important;
-  border-radius: 50% !important;
+  border-radius: 6px !important;
   background-size: cover !important; background-position: center !important;
   background-color: var(--dc-darkest) !important;
 }
@@ -417,7 +417,7 @@ html.discordish-incall .chatHeader .ChatMessageEntryVoice { display: none !impor
   display: flex !important; align-items: center !important; justify-content: center !important;
   overflow: hidden !important;
 }
-.ds-avatar { width: 72px !important; height: 72px !important; border-radius: 50% !important; background-size: cover !important; background-position: center !important; }
+.ds-avatar { width: 72px !important; height: 72px !important; border-radius: 12px !important; background-size: cover !important; background-position: center !important; }
 /* speaking: green ring around the whole tile (Discord) */
 .ds-tile.speaking { box-shadow: inset 0 0 0 2px var(--dc-online) !important; }
 .ds-tile.speaking .ds-avatar { box-shadow: 0 0 0 3px var(--dc-online) !important; }
@@ -463,7 +463,7 @@ html.discordish-incall .chatHeader .ChatMessageEntryVoice { display: none !impor
   animation: dsStageIn .18s var(--dc-ease, ease) !important;
 }
 .ds-ring-av {
-  width: 104px !important; height: 104px !important; border-radius: 50% !important;
+  width: 104px !important; height: 104px !important; border-radius: 16px !important;
   background: #1e1f22 center/cover no-repeat !important;
   box-shadow: 0 0 0 4px var(--dc-online) !important;
   animation: dsRingPulse 1.5s ease-in-out infinite !important;
@@ -496,6 +496,14 @@ html.discordish-incall .chatHeader .ChatMessageEntryVoice { display: none !impor
   width: 100% !important; height: 100% !important;
   object-fit: contain !important; background: #000 !important;
   border-radius: 12px !important; display: block !important;
+}
+/* kill the focus outline (the blue dotted ring) on the share video, and on
+   anything in fullscreen — and square off the video when it's actually fullscreen. */
+.ds-share-video, .ds-share-video:focus, .ds-share-video:focus-visible,
+.ds-share-tile, .ds-share-tile:focus { outline: none !important; }
+:fullscreen, :-webkit-full-screen { outline: none !important; }
+.ds-share-video:fullscreen, .ds-share-video:-webkit-full-screen {
+  width: 100% !important; height: 100% !important; border-radius: 0 !important; background: #000 !important;
 }
 .ds-share-hint {
   position: absolute !important; right: 8px !important; bottom: 8px !important;

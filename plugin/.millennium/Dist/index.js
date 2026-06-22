@@ -960,8 +960,17 @@
           e.stopPropagation();
           var fsEl = doc.fullscreenElement || doc.webkitFullscreenElement;
           if (fsEl) { (doc.exitFullscreen || doc.webkitExitFullscreen || function () {}).call(doc); return; }
-          var req = shareTile.requestFullscreen || shareTile.webkitRequestFullscreen;
-          if (req) { try { req.call(shareTile); } catch (er) {} }
+          // Fullscreen the <video> itself (not the tile): the browser's dedicated
+          // fullscreen-video path paints immediately with black bars — avoids the
+          // custom-element repaint bug (blue bars / blank until mouse move).
+          var req = vid.requestFullscreen || vid.webkitRequestFullscreen || vid.webkitEnterFullscreen;
+          if (req) {
+            try {
+              var pr = req.call(vid);
+              if (pr && pr.then) pr.then(function () { try { vid.play(); } catch (er2) {} });
+            } catch (er) {}
+          }
+          try { vid.play(); } catch (er3) {}
         });
         var syncFs = function () {
           var fsEl = doc.fullscreenElement || doc.webkitFullscreenElement;
@@ -1324,7 +1333,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 57;
+  var VERSION = 58;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
