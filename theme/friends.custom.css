@@ -497,13 +497,18 @@ html.discordish-incall .chatHeader .ChatMessageEntryVoice { display: none !impor
   object-fit: contain !important; background: #000 !important;
   border-radius: 12px !important; display: block !important;
 }
-/* kill the focus outline (the blue dotted ring) on the share video, and on
-   anything in fullscreen — and square off the video when it's actually fullscreen. */
+/* kill the focus outline (the blue dotted ring) on the share video/tile and on
+   ANY fullscreen element (that ring was the whole "blue bars" problem). */
 .ds-share-video, .ds-share-video:focus, .ds-share-video:focus-visible,
 .ds-share-tile, .ds-share-tile:focus { outline: none !important; }
-:fullscreen, :-webkit-full-screen { outline: none !important; }
-.ds-share-video:fullscreen, .ds-share-video:-webkit-full-screen {
-  width: 100% !important; height: 100% !important; border-radius: 0 !important; background: #000 !important;
+:fullscreen, :-webkit-full-screen, :fullscreen *, :-webkit-full-screen * { outline: none !important; }
+/* the tile in true fullscreen: fill the screen edge-to-edge, video squared off,
+   overlay (label/buttons) kept — i.e. the same exclusive-fullscreen look, minus the ring. */
+.ds-share-tile:fullscreen, .ds-share-tile:-webkit-full-screen {
+  width: 100vw !important; height: 100vh !important; border-radius: 0 !important; background: #000 !important;
+}
+.ds-share-tile:fullscreen .ds-share-video, .ds-share-tile:-webkit-full-screen .ds-share-video {
+  border-radius: 0 !important;
 }
 .ds-share-hint {
   position: absolute !important; right: 8px !important; bottom: 8px !important;
