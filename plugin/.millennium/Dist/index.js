@@ -717,18 +717,21 @@
     var fillSources = function () {
       fetch(WCTL + "/sources", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
         ssrc.textContent = "";
-        (j.monitors || []).forEach(function (m, i) {
-          var o = doc.createElement("option"); o.value = "geom:" + m.geom;
-          o.textContent = "Monitor " + (i + 1) + (m.primary ? " ★" : "") + " (" + m.name + ")"; ssrc.appendChild(o);
+        var clip = function (s) { return s.length > 36 ? s.slice(0, 36) + "…" : s; };
+        var group = function (label, items, mk) {
+          if (!items || !items.length) return;
+          var g = doc.createElement("optgroup"); g.label = label;
+          items.forEach(function (it, i) {
+            var o = doc.createElement("option"); var v = mk(it, i);
+            o.value = v[0]; o.textContent = v[1]; g.appendChild(o);
+          });
+          ssrc.appendChild(g);
+        };
+        group("Screens", j.monitors, function (m, i) {
+          return ["geom:" + m.geom, "Monitor " + (i + 1) + (m.primary ? " ★" : "") + " · " + m.name];
         });
-        (j.windows || []).forEach(function (wn) {
-          var o = doc.createElement("option"); o.value = "win:" + wn.id;
-          o.textContent = "🪟 " + (wn.title.length > 32 ? wn.title.slice(0, 32) + "…" : wn.title); ssrc.appendChild(o);
-        });
-        (j.cameras || []).forEach(function (cm) {
-          var o = doc.createElement("option"); o.value = "cam:" + cm.id;
-          o.textContent = "📷 " + (cm.name.length > 32 ? cm.name.slice(0, 32) + "…" : cm.name); ssrc.appendChild(o);
-        });
+        group("Windows", j.windows, function (wn) { return ["win:" + wn.id, clip(wn.title)]; });
+        group("Cameras", j.cameras, function (cm) { return ["cam:" + cm.id, clip(cm.name)]; });
         if (window.__ds_share_geom) ssrc.value = window.__ds_share_geom;
         if (!ssrc.value && ssrc.options.length) ssrc.value = ssrc.options[0].value;
         window.__ds_share_geom = ssrc.value || window.__ds_share_geom;
@@ -930,9 +933,17 @@
         shareTile = el(doc, "div", "ds-tile ds-share-tile");
         if (!shareTile.style.position) shareTile.style.position = "relative";
         var vid = el(doc, "video"); vid.className = "ds-share-video";
-        vid.autoplay = true; vid.muted = true; vid.playsInline = true;
+        // sound ON by default — we try to play unmuted; if the autoplay policy blocks
+        // it, fall back to muted + the one-click "Enable sound" button below.
+        vid.autoplay = true; vid.muted = false; vid.volume = 1; vid.playsInline = true;
+        vid.addEventListener("canplay", function () {
+          if (vid.__sndTried || !window.__ds_view_audio) return;
+          vid.__sndTried = true; vid.muted = false; vid.volume = 1;
+          var p = vid.play && vid.play();
+          if (p && p.catch) p.catch(function () { vid.muted = true; if (vid.play) vid.play().catch(function () {}); });
+        });
         var lbl = el(doc, "div", "ds-name"); lbl.textContent = "🖥 Screen";
-        // browsers block autoplay WITH sound — show a one-click unmute when the host shares audio
+        // one-click unmute, shown only if the browser refused unmuted autoplay
         var unmute = el(doc, "div", "ds-unmute"); unmute.textContent = "🔊 Enable sound";
         unmute.style.cssText = "position:absolute;left:8px;bottom:8px;background:#5865f2;color:#fff;padding:4px 9px;border-radius:6px;font-size:12px;cursor:pointer;z-index:5;display:none";
         unmute.addEventListener("click", function (e) {
@@ -940,11 +951,32 @@
           if (vid.play) vid.play().catch(function () {});
           unmute.style.display = "none";
         });
-        shareTile.appendChild(vid); shareTile.appendChild(lbl); shareTile.appendChild(unmute);
-        shareTile.__unmute = unmute; shareTile.__vid = vid;
+        // true-fullscreen button: ONLY visible once the tile is already in big mode.
+        // Goes edge-to-edge real fullscreen (whole screen), not just the in-app big view.
+        var fsbtn = el(doc, "div", "ds-fsbtn"); fsbtn.textContent = "⛶ Fullscreen";
+        fsbtn.title = "Fill the whole screen";
+        fsbtn.style.cssText = "position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.55);color:#fff;padding:4px 9px;border-radius:6px;font-size:12px;cursor:pointer;z-index:5;display:none";
+        fsbtn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          var fsEl = doc.fullscreenElement || doc.webkitFullscreenElement;
+          if (fsEl) { (doc.exitFullscreen || doc.webkitExitFullscreen || function () {}).call(doc); return; }
+          var req = shareTile.requestFullscreen || shareTile.webkitRequestFullscreen;
+          if (req) { try { req.call(shareTile); } catch (er) {} }
+        });
+        var syncFs = function () {
+          var fsEl = doc.fullscreenElement || doc.webkitFullscreenElement;
+          fsbtn.textContent = fsEl ? "⮌ Exit fullscreen" : "⛶ Fullscreen";
+          // visible only in big mode (or while actually fullscreen)
+          fsbtn.style.display = (__ds_w.expanded || fsEl) ? "block" : "none";
+        };
+        doc.addEventListener("fullscreenchange", syncFs);
+        doc.addEventListener("webkitfullscreenchange", syncFs);
+        shareTile.appendChild(vid); shareTile.appendChild(lbl); shareTile.appendChild(unmute); shareTile.appendChild(fsbtn);
+        shareTile.__unmute = unmute; shareTile.__vid = vid; shareTile.__fsbtn = fsbtn;
         shareTile.addEventListener("click", function () {
           __ds_w.expanded = !__ds_w.expanded;
           stage.classList.toggle("ds-share-expanded", __ds_w.expanded);
+          syncFs();
         });
         tiles.appendChild(shareTile);
         shareTile.dataset.url = window.__ds_view_url;
@@ -1292,7 +1324,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 56;
+  var VERSION = 57;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {

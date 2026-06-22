@@ -649,6 +649,30 @@ def _win_monitors():
     return out
 
 
+# System overlays / helper windows / virtual devices that are never useful to share
+# (matched case-insensitively as substrings of the title/device name). This is why
+# things like the NVIDIA overlay used to clutter the source picker.
+_SRC_DENY = (
+    "nvidia geforce overlay",
+    "nvidia broadcast",
+    "geforce experience",
+    "nvidia container",
+    "program manager",
+    "windows input experience",
+    "windows shell experience host",
+    "microsoft text input application",
+    "xbox game bar",
+    "game bar",
+)
+
+
+def _is_junk_source(name):
+    t = (name or "").strip().lower()
+    if not t:
+        return True
+    return any(k in t for k in _SRC_DENY)
+
+
 def _win_windows():
     import ctypes
     from ctypes import wintypes
@@ -665,7 +689,7 @@ def _win_windows():
         buf = ctypes.create_unicode_buffer(n + 1)
         user32.GetWindowTextW(hwnd, buf, n + 1)
         title = buf.value
-        if not title:
+        if not title or _is_junk_source(title):
             return True
         # skip tool windows (palettes, tray helpers)
         if user32.GetWindowLongW(hwnd, -20) & 0x00000080:   # GWL_EXSTYLE & WS_EX_TOOLWINDOW
@@ -727,6 +751,8 @@ def windows():
                 continue
             if title.startswith("Desktop @") or title in ("Plasma", "Desktop") or "—" == title:
                 continue
+            if _is_junk_source(title):
+                continue
             if int(w) < 120 or int(h) < 100:
                 continue
             out.append({"id": f[0], "title": title, "geom": "%sx%s+%s+%s" % (w, h, x, y)})
@@ -747,7 +773,7 @@ def cameras():
                                capture_output=True, text=True, timeout=8)
             for line in r.stderr.splitlines():
                 m = re.search(r'"([^"]+)"\s*\((video)\)', line)
-                if m:
+                if m and not _is_junk_source(m.group(1)):
                     out.append({"id": m.group(1), "name": m.group(1)})
         except Exception:
             pass
