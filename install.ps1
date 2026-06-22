@@ -27,14 +27,43 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     } else { Write-Warning "git missing and winget unavailable - install Git from https://git-scm.com, then re-run." }
 }
 
-# 1) clone or update the repo
-if (Test-Path (Join-Path $repo ".git")) {
-    Write-Host "Updating repo at $repo"
-    try { git -C $repo pull --ff-only 2>&1 | Out-Host; if ($LASTEXITCODE -ne 0) { throw "pull exit $LASTEXITCODE" } }
-    catch { Write-Warning "git pull failed ($($_.Exception.Message)) - continuing with the existing clone." }
-} else {
-    Write-Host "Cloning into $repo"; git clone $repoUrl $repo
+# 1) clone or update the repo. Robust to three states: a fresh machine, an
+#    existing git checkout, OR a stale NON-git copy from an older/manual install
+#    (that last case made `git clone` hard-fail with "destination already exists").
+function Sync-Repo {
+    if (Test-Path (Join-Path $repo ".git")) {
+        # Existing checkout: hard-reset to latest master (self-healing updater;
+        # discards any local edits, which is what we want on a friend's machine).
+        Write-Host "Updating repo at $repo"
+        try {
+            git -C $repo fetch origin 2>&1 | Out-Host
+            git -C $repo reset --hard origin/master 2>&1 | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "reset exit $LASTEXITCODE" }
+        } catch { Write-Warning "git update failed ($($_.Exception.Message)) - continuing with the existing clone." }
+        return
+    }
+    if (Test-Path $repo) {
+        # Folder exists but isn't a git checkout. Adopt it IN PLACE (init + fetch +
+        # reset) so already-fetched bin\ binaries survive, instead of failing.
+        Write-Host "Found a non-git copy at $repo - converting it to a git checkout"
+        try {
+            git -C $repo init 2>&1 | Out-Host
+            git -C $repo remote remove origin 2>$null
+            git -C $repo remote add origin $repoUrl 2>&1 | Out-Host
+            git -C $repo fetch origin 2>&1 | Out-Host
+            git -C $repo reset --hard origin/master 2>&1 | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "reset exit $LASTEXITCODE" }
+            return
+        } catch {
+            Write-Warning "Couldn't adopt the existing folder ($($_.Exception.Message)) - re-cloning fresh."
+            try { Rename-Item $repo "$repo.bak" -Force } catch { Remove-Item $repo -Recurse -Force }
+        }
+    }
+    Write-Host "Cloning into $repo"
+    git clone $repoUrl $repo 2>&1 | Out-Host
+    if (-not (Test-Path (Join-Path $repo ".git"))) { throw "git clone failed - check internet and that git installed correctly, then re-run." }
 }
+Sync-Repo
 
 # 2) find Millennium's config.json. Millennium stores it at
 #    <SteamPath>\millennium\config\config.json, where SteamPath comes from the
