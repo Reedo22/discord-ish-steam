@@ -510,6 +510,11 @@ html.discordish-incall .chatHeader .ChatMessageEntryVoice { display: none !impor
 .ds-share-tile:fullscreen .ds-share-video, .ds-share-tile:-webkit-full-screen .ds-share-video {
   border-radius: 0 !important;
 }
+/* auto-hide overlay buttons + cursor in fullscreen after idle (ds-fs-idle toggled by JS) */
+.ds-share-tile:fullscreen .ds-unmute, .ds-share-tile:fullscreen .ds-fsbtn { transition: opacity .2s ease !important; }
+.ds-share-tile:fullscreen.ds-fs-idle { cursor: none !important; }
+.ds-share-tile:fullscreen.ds-fs-idle .ds-unmute,
+.ds-share-tile:fullscreen.ds-fs-idle .ds-fsbtn { opacity: 0 !important; pointer-events: none !important; }
 .ds-share-hint {
   position: absolute !important; right: 8px !important; bottom: 8px !important;
   font-size: 11px !important; color: rgba(255,255,255,.75) !important;

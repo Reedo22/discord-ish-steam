@@ -972,12 +972,24 @@
           }
           try { vid.play(); } catch (er3) {}
         });
+        // in exclusive fullscreen the overlay buttons (+cursor) auto-hide after 2.5s
+        // idle and reappear on mouse move — like a video player.
+        var fsHideTimer = null;
+        var fsShowControls = function () {
+          shareTile.classList.remove("ds-fs-idle");
+          if (fsHideTimer) { clearTimeout(fsHideTimer); fsHideTimer = null; }
+          if (doc.fullscreenElement || doc.webkitFullscreenElement)
+            fsHideTimer = setTimeout(function () { shareTile.classList.add("ds-fs-idle"); }, 2500);
+        };
         var syncFs = function () {
           var fsEl = doc.fullscreenElement || doc.webkitFullscreenElement;
           fsbtn.textContent = fsEl ? "⮌ Exit fullscreen" : "⛶ Fullscreen";
           // visible only in big mode (or while actually fullscreen)
           fsbtn.style.display = (__ds_w.expanded || fsEl) ? "block" : "none";
+          if (fsEl) { fsShowControls(); }
+          else { shareTile.classList.remove("ds-fs-idle"); if (fsHideTimer) { clearTimeout(fsHideTimer); fsHideTimer = null; } }
         };
+        shareTile.addEventListener("mousemove", fsShowControls);
         doc.addEventListener("fullscreenchange", syncFs);
         doc.addEventListener("webkitfullscreenchange", syncFs);
         shareTile.appendChild(vid); shareTile.appendChild(unmute); shareTile.appendChild(fsbtn);
@@ -1341,7 +1353,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 60;
+  var VERSION = 61;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
