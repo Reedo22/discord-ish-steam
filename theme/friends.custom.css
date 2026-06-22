@@ -445,7 +445,7 @@ html.discordish-incall .chatHeader .ChatMessageEntryVoice { display: none !impor
 .ds-share-tile {
   cursor: pointer !important;
   background: #101114 !important;
-  border: 2px dashed var(--ds-accent, #5865f2) !important;
+  border: 1px solid rgba(255,255,255,.08) !important;
   box-sizing: border-box !important;
 }
 .ds-share-tile .ds-name { background: var(--ds-accent, #5865f2) !important; }
@@ -505,7 +505,7 @@ html.discordish-incall .chatHeader .ChatMessageEntryVoice { display: none !impor
 /* the tile in true fullscreen: fill the screen edge-to-edge, video squared off,
    overlay (label/buttons) kept — i.e. the same exclusive-fullscreen look, minus the ring. */
 .ds-share-tile:fullscreen, .ds-share-tile:-webkit-full-screen {
-  width: 100vw !important; height: 100vh !important; border-radius: 0 !important; background: #000 !important;
+  width: 100vw !important; height: 100vh !important; border-radius: 0 !important; border: none !important; background: #000 !important;
 }
 .ds-share-tile:fullscreen .ds-share-video, .ds-share-tile:-webkit-full-screen .ds-share-video {
   border-radius: 0 !important;

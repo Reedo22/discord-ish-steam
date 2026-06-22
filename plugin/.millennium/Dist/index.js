@@ -942,7 +942,7 @@
           var p = vid.play && vid.play();
           if (p && p.catch) p.catch(function () { vid.muted = true; if (vid.play) vid.play().catch(function () {}); });
         });
-        var lbl = el(doc, "div", "ds-name"); lbl.textContent = "🖥 Screen";
+        // no "Screen" label overlay — keeps the shared video clean (e.g. when recording)
         // one-click unmute, shown only if the browser refused unmuted autoplay
         var unmute = el(doc, "div", "ds-unmute"); unmute.textContent = "🔊 Enable sound";
         unmute.style.cssText = "position:absolute;left:8px;bottom:8px;background:#5865f2;color:#fff;padding:4px 9px;border-radius:6px;font-size:12px;cursor:pointer;z-index:5;display:none";
@@ -980,7 +980,7 @@
         };
         doc.addEventListener("fullscreenchange", syncFs);
         doc.addEventListener("webkitfullscreenchange", syncFs);
-        shareTile.appendChild(vid); shareTile.appendChild(lbl); shareTile.appendChild(unmute); shareTile.appendChild(fsbtn);
+        shareTile.appendChild(vid); shareTile.appendChild(unmute); shareTile.appendChild(fsbtn);
         shareTile.__unmute = unmute; shareTile.__vid = vid; shareTile.__fsbtn = fsbtn;
         shareTile.addEventListener("click", function () {
           __ds_w.expanded = !__ds_w.expanded;
@@ -1178,26 +1178,34 @@
         if (st && typeof st.m_bInitiatedOneOnOneCall === "boolean") incoming = !st.m_bInitiatedOneOnOneCall;
       } catch (e) {}
       if (incoming === undefined) incoming = !!native.querySelector(".inviteButtonJoinVoice");
-      // Read name + avatar straight from the native ring (always correct, unlike the chat title)
+      // Resolve the OTHER party. For OUTGOING calls the native ring label shows OUR
+      // name (not the callee's), so resolve the callee from the voice store's target
+      // accountID via the friend store — that gives the right name AND avatar.
+      var tName = "", tAvatar = "";
+      try {
+        var tAcct = st && st.m_targetAccountID;
+        var fs = window.g_FriendsUIApp && window.g_FriendsUIApp.m_FriendStore;
+        var fr = (fs && tAcct && fs.GetFriend) ? fs.GetFriend(tAcct) : null;
+        if (!fr && fs && tAcct && fs.all_friends) fr = fs.all_friends.find(function (x) {
+          var p = x.m_persona || {};
+          return p.m_unAccountID === tAcct || p.accountid === tAcct ||
+                 (p.m_steamid && p.m_steamid.GetAccountID && p.m_steamid.GetAccountID() === tAcct);
+        });
+        if (fr) {
+          tName = fr.m_strNickname || (fr.m_persona && fr.m_persona.m_strPlayerName) || "";
+          tAvatar = (fr.m_persona && (fr.m_persona.avatar_url_full || fr.m_persona.avatar_url_medium)) || "";
+        }
+      } catch (e) {}
       var nameEl = native.querySelector(".nOdcT-MoOaXGePXLyPe0H, [class*=VoiceStatusLab]");
-      var name = (nameEl ? nameEl.textContent : "").replace(/\s*would like[\s\S]*$/i, "").trim() || chatFriendName(doc) || "Friend";
+      var nativeName = (nameEl ? nameEl.textContent : "").replace(/\s*would like[\s\S]*$/i, "").trim();
+      // incoming -> trust the native caller label; outgoing -> the resolved callee
+      var name = (incoming ? nativeName : tName) || tName || nativeName || chatFriendName(doc) || "Friend";
       var avatar = "";
-      var imgs = native.querySelectorAll("img");
-      for (var ii = 0; ii < imgs.length; ii++) { if (imgs[ii].src && imgs[ii].src.indexOf("data:") !== 0) { avatar = imgs[ii].src.replace("_medium", "_full"); break; } }
-      if (!avatar) {   // native ring carries no <img> — resolve the avatar from the friend store via the call's target accountID
-        try {
-          var tAcct = st && st.m_targetAccountID;
-          var fs = window.g_FriendsUIApp && window.g_FriendsUIApp.m_FriendStore;
-          var fr = (fs && tAcct && fs.GetFriend) ? fs.GetFriend(tAcct) : null;
-          if (!fr && fs && tAcct) fr = fs.all_friends.find(function (x) {
-            var p = x.m_persona || {};
-            return p.m_unAccountID === tAcct || p.accountid === tAcct ||
-                   (p.m_steamid && p.m_steamid.GetAccountID && p.m_steamid.GetAccountID() === tAcct);
-          });
-          var per = fr && fr.m_persona;
-          if (per) avatar = per.avatar_url_full || per.avatar_url_medium || avatar;
-        } catch (e) {}
+      if (incoming) {   // incoming ring carries the caller's <img>
+        var imgs = native.querySelectorAll("img");
+        for (var ii = 0; ii < imgs.length; ii++) { if (imgs[ii].src && imgs[ii].src.indexOf("data:") !== 0) { avatar = imgs[ii].src.replace("_medium", "_full"); break; } }
       }
+      if (!avatar) avatar = tAvatar;   // outgoing (or native had no img): resolved target avatar
       native.classList.add("ds-native-hidden");         // hide Steam's menu (kept clickable for proxy)
       var ring = main.querySelector(".ds-ring");
       if (existing && existing !== ring) existing.remove();
@@ -1333,7 +1341,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 59;
+  var VERSION = 60;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
