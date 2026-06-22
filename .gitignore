@@ -13,3 +13,4 @@ bin/auto.crt
 bin/auto.key
 auto.crt
 auto.key
+dist/

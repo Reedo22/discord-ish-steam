@@ -14,6 +14,19 @@ $repo = Join-Path $env:USERPROFILE "discord-ish-steam"
 
 Write-Host "== discord-ish-steam Windows installer =="
 
+# 0) ensure git (needed for the clone in step 1). The one-click setup.exe runs us
+#    elevated, so winget can actually install here; if winget is absent we warn and
+#    the clone below will surface the missing-git error.
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    $wg = Get-Command winget -ErrorAction SilentlyContinue
+    if ($wg) {
+        Write-Host "Installing git (winget)..."
+        winget install -e --id Git.Git --silent --accept-package-agreements --accept-source-agreements | Out-Null
+        $m = [Environment]::GetEnvironmentVariable('Path','Machine'); $u = [Environment]::GetEnvironmentVariable('Path','User')
+        $env:Path = (@($m, $u) | Where-Object { $_ }) -join ';'
+    } else { Write-Warning "git missing and winget unavailable - install Git from https://git-scm.com, then re-run." }
+}
+
 # 1) clone or update the repo
 if (Test-Path (Join-Path $repo ".git")) {
     Write-Host "Updating repo at $repo"
