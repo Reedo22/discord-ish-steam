@@ -85,28 +85,63 @@ sandbox can't:
 
 ```
 capture ──▶ H.264 hw-encode (+AAC audio) ──▶ MediaMTX ──▶ WebRTC/WHEP ─┐
-(x11grab / gst ximagesrc on Linux,          (NVENC/VAAPI/QSV/          ├─▶ viewer <video>
- gdigrab on Windows; v4l2/dshow webcam)      AMF, else x264)           │
+(Linux X11: x11grab / gst ximagesrc;        (NVENC/VAAPI/QSV/          ├─▶ viewer <video>
+ Linux Wayland: ScreenCast portal ->         AMF, else x264)           │
+ PipeWire -> gst pipewiresrc;                                          │
+ gdigrab on Windows; v4l2/dshow webcam)                                │
                             └──▶ fragmented-MP4 over WebSocket ────────┘
 ```
 
-- **Two transports, auto-selected:** same-LAN viewers connect directly over
-  **WebRTC/WHEP** (lowest latency); remote viewers fall back to **fMP4 over a
-  WebSocket** through an on-demand Cloudflare quick tunnel — no TURN server needed.
-  The viewer has an adaptive jitter buffer that smooths bad connections.
-- **Desktop audio** is captured with **no virtual audio device** (Linux: the
-  PulseAudio monitor; Windows: WASAPI loopback via `pyaudiowpatch`) and muxed into
-  the stream. Sound is on by default for the viewer.
-- **Per-window capture is occlusion-proof on Linux** (grabs the window's own
-  buffer via `ximagesrc xid`) — the window can be behind others, just not
-  minimized. Windows uses `gdigrab` by title.
+- **AV1 when the GPU can, H.264 otherwise** (Settings: Codec → Auto). Measured on
+  real gameplay + scrolling-code clips (SSIM/PSNR): AV1 needs ~40–50% less bitrate than
+  H.264 for the same quality; NVENC runs at preset p5 / tune ll / spatial AQ, 2 s GOP,
+  1 s VBV. Defaults: 1440p60 @ 8 Mbps. AV1 encode needs RTX 40 / RX 7000 / Intel Arc;
+  every viewer can decode it (Chromium ships a software AV1 decoder).
+- **One capture, one encode, both transports.** ffmpeg's tee muxer feeds WebRTC
+  (via MediaMTX) and the WebSocket/fMP4 path from the same encode.
+- **Video goes direct, not through Cloudflare.** The daemon forwards its WebRTC UDP
+  port (8189) on your router with **UPnP** (checked: it reads the mapping back, and
+  reports double-NAT/CGNAT), so off-LAN viewers connect straight to you. A Cloudflare
+  quick tunnel then only carries the tiny WebRTC handshake; the WebSocket/fMP4
+  fallback uses it only when WebRTC can't connect. Cloudflare's terms don't allow
+  serving video through their CDN on free plans, so this matters beyond latency.
+- **Own domain (optional):** point an HTTPS reverse proxy at port 48890 (path
+  `/screen/`, WebSocket upgrade, buffering off) and put
+  `{"url": "https://your.domain"}` in `~/.config/discordish/public.json` (or set
+  `DS_PUBLIC_URL`). Then no tunnel is used at all. Viewers in the same house get
+  the LAN address too, since many routers don't loop back to their own public IP.
+- **Every share has a random access key** in its URLs; the public-facing port
+  answers nothing without it.
+- **Desktop audio — everything except Steam.** Steam's own audio (the call's voices
+  and any incoming share) is left out, the way Discord leaves out its own: otherwise the
+  friend hears their own voice echoed back a second late, and two people sharing at
+  once feed each other into a screeching loop. Linux: a private PipeWire recording
+  stream with every app's playback linked in except Steam's (no virtual device; apps
+  still play normally). Windows 10 2004+/11: WASAPI process loopback excluding Steam's
+  webhelper process tree. Extra apps to leave out: `DS_AUDIO_EXCLUDE=vesktop,...`.
+  Older systems fall back to the whole desktop mix (with a warning in the log).
+- **Desktop audio** needs **no virtual audio device** and is encoded once as
+  **Opus** and carried on BOTH transports. That needs ffmpeg ≥ 7.1 (Opus over RTMP);
+  `bin/fetch-linux.sh` downloads a static build into `bin/` when the distro one is
+  older, picking the oldest suitable branch whose NVENC still works on your driver.
+  With an older ffmpeg, audio falls back to AAC on the WebSocket path only.
+- **Per-window capture is occlusion-proof on Linux** (X11: grabs the window's own
+  buffer via `ximagesrc xid`; Wayland: the compositor streams the window over
+  PipeWire) — the window can be behind others, just not minimized. Windows uses
+  `gdigrab` by title.
+- **Wayland is fully supported** via the xdg-desktop-portal ScreenCast API: the
+  first share shows the desktop's own picker dialog once, then the choice is
+  remembered (portal restore token) and later shares start with no prompt.
+  Window-share on Wayland always picks through the system dialog (compositors
+  don't let apps enumerate other windows).
 - Viewers only decode H.264, so any GPU/OS can watch. Click the tile to enlarge;
   in big mode a **Fullscreen** button fills the whole screen.
 
 Host requirements: **Python 3**, **ffmpeg** on PATH, **MediaMTX** in `bin/`, and
 (Windows desktop audio) **pyaudiowpatch** — all handled by the installer.
 `cloudflared` in `bin/` is optional (off-LAN sharing only). Linux per-window
-capture also needs `gstreamer1.0-tools` + plugins.
+capture also needs `gstreamer1.0-tools` + plugins; Wayland additionally needs
+`gstreamer1.0-pipewire` + `python3-dbus` + `python3-gi` (the installer adds them).
 
 ## How it works
 
@@ -120,14 +155,39 @@ capture also needs `gstreamer1.0-tools` + plugins.
   Run `python rp-webrtc.py --selftest` to diagnose capture/encode/audio.
 - `bin/installer.nsi` + `bin/build-installer.sh` — build the one-click Windows EXE.
 - `bin/rp-mediamtx.yml` — MediaMTX config (RTSP ingest + WebRTC/WHEP).
+- The control API (`127.0.0.1:48592`) only answers Steam's own pages
+  (`https://steamloopback.host`, `*.steampowered.com`, `*.steamcommunity.com`) and
+  non-browser clients (curl, the Lua backend). Any other web page open in a browser
+  on the same machine is refused, so it can't start a share or read your tunnel URL.
+  Refusals are logged (`[ctl] refused …`); add an origin with
+  `DS_ALLOW_ORIGINS=https://example` if you really need one.
+
+## Tests
+
+```bash
+tests/run.sh          # daemon + Lua backend (python unittest) + plugin (node --test)
+```
+
+Stdlib only (no pip installs). The daemon tests include an end-to-end run (real
+ffmpeg → fMP4 pump → WebSocket viewer) that skips if ffmpeg is missing; the Lua
+tests load `main.lua` through `libluajit` via ctypes and skip without it; the
+plugin tests need Node ≥ 18.
 
 ## Notes / limits
+
+- **No plugin backend (on purpose).** Millennium 3 holds Steam's whole window back until
+  every plugin backend reports ready, with no timeout; an older Millennium build hangs
+  Steam even when it does. So the plugin ships `useBackend: false` and the screen-share
+  daemon is started by systemd (Linux) / a logon task (Windows) instead.
+  `plugin/backend/main.lua` (which calls `millennium.ready()`) stays in the repo for
+  when every install is on Millennium ≥ 3.6.
+- **Keep Millennium current.** A June 2026 Linux build loaded its frontend library but
+  never initialized against the current Steam client, so no plugin ran at all. Update
+  with Millennium's installer (the Windows installer here does it automatically).
 
 - Steam's voice UI is global (roster header), so the call stage is scoped to the
   group/friend you're viewing rather than bound to a single chat.
 - Per-window share can't capture a **minimized** window (no frames are presented).
-- Only the WebSocket/fMP4 path carries audio; the WebRTC/LAN path is video-only
-  (Opus mux is a future addition).
 - On Millennium ≥ v3, CEF uses a debugging *pipe* rather than a TCP port, so the
   `tools/` CDP helpers won't attach (deploy = commit → restart Steam; the plugin
   self-updates).
