@@ -1,0 +1,75 @@
+# Runs the test suite on Linux and on a real Windows machine (GitHub-hosted runners).
+# Push to any branch to run it. The plugin self-updates ONLY from master, so testing on a
+# branch never reaches friends' Steam.
+name: tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg libluajit-5.1-2
+      - run: tests/run.sh -v
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: ffmpeg
+        run: choco install ffmpeg -y --no-progress
+      - name: unit + end-to-end tests
+        run: |
+          python -m unittest discover -s tests -v
+          node --test tests/test_plugin.mjs
+      - name: daemon self-test (real gdigrab capture + encode on Windows)
+        shell: pwsh
+        run: |
+          $out = python rp-webrtc.py --selftest | Out-String
+          Write-Host $out
+          if ($out -notmatch 'capture\+encode: PASS') { throw "Windows capture+encode failed" }
+
+  windows-installer:
+    # The real one-liner installer, end to end, against a fake Steam + Millennium layout:
+    # Python detection, pyaudiowpatch, host-binary fetch, plugin copy, config.json enable,
+    # logon task, and the daemon actually answering on its control port afterwards.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: fake Steam + Millennium
+        shell: pwsh
+        run: |
+          $steam = "C:\fakesteam"
+          New-Item -ItemType Directory -Force "$steam\millennium\config" | Out-Null
+          '{"plugins":{"enabledPlugins":[]}}' | Set-Content "$steam\millennium\config\config.json"
+          New-Item -Force 'HKCU:\Software\Valve\Steam' | Out-Null
+          Set-ItemProperty 'HKCU:\Software\Valve\Steam' SteamPath 'c:/fakesteam'
+      - name: run install.ps1
+        shell: pwsh
+        env:
+          DS_REPO_REF: ${{ github.sha }}
+        run: ./install.ps1
+      - name: verify install
+        shell: pwsh
+        run: |
+          $cfg = Get-Content C:\fakesteam\millennium\config\config.json -Raw | ConvertFrom-Json
+          if ($cfg.plugins.enabledPlugins -notcontains 'discordish-chat') { throw "plugin not enabled" }
+          if (-not (Test-Path C:\fakesteam\millennium\plugins\discordish-chat\backend\main.lua)) { throw "plugin not copied" }
+          if (-not (Test-Path "$env:USERPROFILE\discord-ish-steam\bin\mediamtx.exe")) { throw "mediamtx.exe missing" }
+          if (-not (Get-ScheduledTask -TaskName discordish-rp-webrtc -ErrorAction SilentlyContinue)) { throw "logon task missing" }
+          $ok = $false
+          foreach ($i in 1..30) {
+            try { $j = Invoke-RestMethod http://127.0.0.1:48592/ping; if ($j.ok) { $ok = $true; break } } catch {}
+            Start-Sleep 1
+          }
+          if (-not $ok) { throw "daemon never answered /ping" }
+          Write-Host "daemon up:" ($j | ConvertTo-Json -Compress)

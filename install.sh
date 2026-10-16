@@ -7,7 +7,9 @@
 # CSS source of truth = theme/friends.custom.css.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-QUICKCSS="$HOME/.config/millennium/quickcss.css"
+# Millennium v3 reads quick.css (older builds read quickcss.css) — write both.
+QUICKCSS="$HOME/.config/millennium/quick.css"
+QUICKCSS_OLD="$HOME/.config/millennium/quickcss.css"
 CONFIG="$HOME/.config/millennium/config.json"
 PLUGINS="$HOME/.local/share/millennium/plugins"
 
@@ -20,11 +22,12 @@ fi
 
 # --- system dependencies (ffmpeg + gstreamer for capture, python3 for the daemon) ---
 install_deps() {
-# wmctrl lists windows, x11-xserver-utils provides xrandr (lists monitors) — BOTH required
-# for the source picker; without them the daemon can't enumerate monitors OR apps.
-  local apt=(ffmpeg python3 gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad wmctrl x11-xserver-utils)
-  local dnf=(ffmpeg python3 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free wmctrl xrandr)
-  local pac=(ffmpeg python gst-plugins-base gst-plugins-good gst-plugins-bad wmctrl xorg-xrandr)
+# X11: wmctrl lists windows, x11-xserver-utils provides xrandr (lists monitors).
+# Wayland: gstreamer pipewire plugin + python dbus/gi drive the xdg-desktop-portal
+# ScreenCast path (the compositor's own picker replaces wmctrl/xrandr enumeration).
+  local apt=(ffmpeg python3 gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-pipewire python3-dbus python3-gi wmctrl x11-xserver-utils)
+  local dnf=(ffmpeg python3 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free pipewire-gstreamer python3-dbus python3-gobject wmctrl xrandr)
+  local pac=(ffmpeg python gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugin-pipewire python-dbus python-gobject wmctrl xorg-xrandr)
   if   command -v apt-get >/dev/null 2>&1; then echo "Installing deps (apt, needs sudo)…"; sudo apt-get install -y "${apt[@]}" || echo "  ! apt install failed — install manually: ${apt[*]}" >&2
   elif command -v dnf     >/dev/null 2>&1; then echo "Installing deps (dnf, needs sudo)…"; sudo dnf install -y "${dnf[@]}" || echo "  ! dnf install failed" >&2
   elif command -v pacman  >/dev/null 2>&1; then echo "Installing deps (pacman, needs sudo)…"; sudo pacman -S --needed --noconfirm "${pac[@]}" || echo "  ! pacman install failed" >&2
@@ -41,6 +44,7 @@ bash "$HERE/bin/fetch-linux.sh" || echo "  ! binary fetch failed — see bin/fet
   echo "/* === discord-ish steam reskin (managed by steam-reskin/install.sh) === */"
   cat "$HERE/theme/friends.custom.css"
 } > "$QUICKCSS"
+cp "$QUICKCSS" "$QUICKCSS_OLD"
 echo "Wrote $(wc -l < "$QUICKCSS") lines to $QUICKCSS"
 
 # --- plugin ---
@@ -62,8 +66,9 @@ PY
 fi
 
 # --- screen-share daemon (rp-webrtc.py) as a systemd --user service ---
-# Captures a monitor/window (ffmpeg x11grab / gst ximagesrc + NVENC/VAAPI/QSV), publishes
-# via MediaMTX, serves WebRTC/WHEP to the viewer's plugin. Auto-starts + auto-restarts.
+# Captures a monitor/window (X11: ffmpeg x11grab / gst ximagesrc; Wayland: ScreenCast
+# portal -> pipewire; NVENC/VAAPI/QSV encode), publishes via MediaMTX, serves WebRTC/WHEP
+# to the viewer's plugin. Auto-starts + auto-restarts.
 DISPLAY_VAL="${DISPLAY:-:1}"
 SVC_DIR="$HOME/.config/systemd/user"
 mkdir -p "$SVC_DIR"
@@ -77,7 +82,10 @@ Type=simple
 Environment=DISPLAY=$DISPLAY_VAL
 WorkingDirectory=$HERE
 ExecStart=/usr/bin/python3 $HERE/rp-webrtc.py
-Restart=always
+# on-failure, NOT always: the daemon now self-guards on its control port and exits 0 when
+# another instance already owns it (the plugin's Lua backend also starts one on every Steam
+# launch). With Restart=always that clean exit would respawn every RestartSec forever.
+Restart=on-failure
 RestartSec=3
 
 [Install]
@@ -96,9 +104,16 @@ fi
 # --- verify the capture stack is in place ---
 ok=1
 command -v ffmpeg         >/dev/null 2>&1 || { echo "  ! ffmpeg still missing — screen-share capture won't work." >&2; ok=0; }
-command -v gst-launch-1.0 >/dev/null 2>&1 || echo "  ! gstreamer missing — per-window (occlusion-proof) capture won't work; monitor capture still will." >&2
-command -v xrandr         >/dev/null 2>&1 || { echo "  ! xrandr missing — daemon can't list MONITORS, so you can't start a share. Install: x11-xserver-utils" >&2; ok=0; }
-command -v wmctrl         >/dev/null 2>&1 || echo "  ! wmctrl missing — daemon can't list app WINDOWS (per-app share); monitor share still works." >&2
+if [[ "${XDG_SESSION_TYPE:-}" == "wayland" ]]; then
+  # Wayland: everything goes through the ScreenCast portal -> pipewire -> gstreamer.
+  command -v gst-launch-1.0 >/dev/null 2>&1 || { echo "  ! gstreamer missing — Wayland capture won't work at all." >&2; ok=0; }
+  gst-inspect-1.0 pipewiresrc >/dev/null 2>&1 || { echo "  ! gst pipewiresrc missing — install gstreamer1.0-pipewire (Wayland capture needs it)." >&2; ok=0; }
+  python3 -c 'import dbus, gi' >/dev/null 2>&1 || { echo "  ! python3-dbus / python3-gi missing — daemon can't talk to the screencast portal." >&2; ok=0; }
+else
+  command -v gst-launch-1.0 >/dev/null 2>&1 || echo "  ! gstreamer missing — per-window (occlusion-proof) capture won't work; monitor capture still will." >&2
+  command -v xrandr         >/dev/null 2>&1 || { echo "  ! xrandr missing — daemon can't list MONITORS, so you can't start a share. Install: x11-xserver-utils" >&2; ok=0; }
+  command -v wmctrl         >/dev/null 2>&1 || echo "  ! wmctrl missing — daemon can't list app WINDOWS (per-app share); monitor share still works." >&2
+fi
 [[ -x "$HERE/bin/mediamtx" ]] || { echo "  ! bin/mediamtx missing — screen share won't work." >&2; ok=0; }
 [[ $ok = 1 ]] && echo "Capture stack OK (ffmpeg + mediamtx present)."
 

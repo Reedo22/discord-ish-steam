@@ -23,9 +23,9 @@ InstallDir "$TEMP\discord-ish-steam-setup"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_INSTFILES
-; Custom finish text: the user must restart Steam for the plugin to load.
+; Custom finish text (install.ps1 restarts Steam itself now).
 !define MUI_FINISHPAGE_TITLE "Almost done"
-!define MUI_FINISHPAGE_TEXT "Setup finished.$\r$\n$\r$\n1) Fully restart Steam (right-click the tray icon > Exit, then relaunch).$\r$\n2) Friends settings > enable 'Dock chats to the friends list'.$\r$\n$\r$\nScreen share + noise cancellation are now installed and the daemon auto-starts at logon."
+!define MUI_FINISHPAGE_TEXT "Setup finished - Steam was restarted with the plugin loaded (Millennium is installed automatically if it was missing).$\r$\n$\r$\nOne thing left: Steam > Friends settings > enable 'Dock chats to the friends list'.$\r$\n$\r$\nScreen share + noise cancellation are installed and the helper starts with Steam."
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_LANGUAGE "English"
 
