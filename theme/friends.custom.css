@@ -301,6 +301,8 @@
   background: var(--dc-raise) !important; color: var(--dc-text) !important; cursor: pointer !important;
 }
 .ds-stream-stop:hover { background: #f23f43 !important; color: #fff !important; }
+/* share popover status when a share failed/ended (helper down, picker cancelled, ...) */
+.ds-stream-error { color: #f23f43 !important; }
 
 /* voice (start/end call) toggle: force a real circle — Steam pads it to an oval, so
    pin every dimension + kill padding + stop flex from stretching it. 40px to match the

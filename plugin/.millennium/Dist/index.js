@@ -165,148 +165,6 @@
     return ((doc.title || "").split(" - ")[1] || "").replace(/ \+ \d+ Chats?$/, "");
   }
 
-  // SteamID64 of the friend whose chat is open (matched by display name).
-  function friendSteamID64(doc) {
-    try {
-      var name = chatFriendName(doc).toLowerCase();
-      var fs = window.g_FriendsUIApp.m_FriendStore;
-      var f = fs.all_friends.find(function (x) {
-        var p = x.m_persona || {};
-        return [x.m_strNickname, p.m_strPlayerName].some(function (n) {
-          return n && ("" + n).toLowerCase() === name;
-        });
-      });
-      return (f && f.m_persona && f.m_persona.m_steamid) ? f.m_persona.m_steamid.ConvertTo64BitString() : null;
-    } catch (e) { return null; }
-  }
-  var IS_WIN = /win/i.test((window.navigator && (navigator.platform || navigator.userAgent)) || "");
-  // Monitor geometries (x11grab WxH+X+Y) for this rig — used by the Remote Play capture.
-  var MONITORS = { primary: "3840x2160+0+0", secondary: "3840x2160+3840+0" };
-
-  // --- Remote Play Together screen share (no RemotePlayWhatever) -------------
-  // Host Spacewar (480) so an RPT-eligible group is created, then invite the
-  // friend with Steam's own RPT API. The group is created async and the JS store
-  // never tracks it, so we catch the GroupCreated callback and invite with the
-  // raw groupID immediately (idle groups disband within seconds otherwise).
-  var SPACEWAR = "480";
-  var RPCAP = "/home/reedo/steam-reskin/rp-capture.py";   // our capture/control server (Linux path)
-  var RPCTL = "http://127.0.0.1:48591";                    // its localhost control API (both OSes)
-  // Windows: the plugin can't exec, so the hijacked-480 launch runs this PowerShell
-  // launcher, which starts the capture server (rp-capture.py). No RemotePlayWhatever —
-  // the invite is sent natively from JS, same as Linux. (installer rewrites the path).
-  var WIN_POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
-  var WIN_LAUNCHER = "C:\\Users\\reedo\\discord-ish-steam\\rp-capture-launch.ps1";
-  function rpRaw() { return window.SteamClient && window.SteamClient.RemotePlay; }
-
-  // (Single-monitor capture via server-config custom_display_device was removed: on
-  //  Linux the streaming backend clears the value for every format tried AND enabling
-  //  the server-config gate crashed the share. Whole-desktop only on Linux.)
-
-  // Remote Play Together share flow.
-  //
-  // We do NOT hijack Spacewar's launch anymore. The old approach pointed appid 480 at
-  // a fake ffplay/gstreamer "game" so RPT would stream that window — but on Linux RPT
-  // captures the game via its GL-presentation hook (gameoverlayrenderer/glXSwapBuffers),
-  // which never grabs ffplay/glimagesink output, so the guest always saw BLACK. The fix
-  // is to run the REAL Spacewar (480) under Proton as an RPT anchor (a genuine GL game
-  // Steam can capture), then switch on whole-desktop streaming and invite the friend.
-  //
-  // Hard-won gotchas baked in below (each cost hours):
-  //  - RunGame on an ALREADY-running app does NOT fire GroupCreated. To get a fresh
-  //    group we must TerminateApp first, wait, then RunGame.
-  //  - The groupID only arrives via the GroupCreated callback (the JS store never
-  //    tracks it). Invite immediately — an idle group disbands within seconds.
-  //  - NEVER minimize/hide the anchor window. A minimized window presents no frames
-  //    and the stream silently never starts (the old rp-hide-spacewar.sh broke this).
-  //  - VIEWER-side prereqs (see install.sh): the receiving machine's Steam
-  //    streaming_client (appid 202355) needs libvpx.so.6 present system-wide (it links
-  //    it; Ubuntu/Pop 24.04 ship libvpx9 only -> instant crash), and must NOT have
-  //    Millennium LD_PRELOADed into it (libmillennium_hhx64.so makes it exit in ~1s).
-  function shareRP(doc) {
-    try {
-      var sid = friendSteamID64(doc);
-      if (!sid) { console.warn("[ds] RP: no friend for this chat"); return; }
-      var RP = rpRaw();
-      if (!RP) { console.warn("[ds] RP: SteamClient.RemotePlay missing"); return; }
-      var A = window.SteamClient.Apps;
-      window.__ds_share_mode = "remoteplay";
-
-      // CRITICAL: enabling desktop mode isn't enough — once the guest's remote client
-      // actually connects we must call StartDesktopStream(clientId) to switch the stream
-      // from the Spacewar GAME window to the DESKTOP. Without this the friend only sees
-      // Spacewar. Register once; it fires whenever a remote client starts during a share.
-      if (!window.__ds_rcs_reg && RP.RegisterForRemoteClientStarted) {
-        window.__ds_rcs_reg = RP.RegisterForRemoteClientStarted(function (groupID, steam, gameid, clientId) {
-          if (window.__ds_share_mode !== "remoteplay") return;
-          console.log("[ds] remote client started -> StartDesktopStream", clientId);
-          try { RP.StartDesktopStream(clientId); } catch (e) { console.warn("[ds] StartDesktopStream", e); }
-        });
-      }
-
-      // Fast path: the anchor was pre-warmed when the call started (prewarmAnchor) —
-      // the group already exists, so just enable desktop streaming + invite. Instant.
-      if (window.__ds_anchor_warm && window.__ds_rpt_groupid != null) {
-        try { RP.SetStreamingDesktopToRemotePlayTogetherEnabled(window.__ds_rpt_groupid, true); } catch (e) {}
-        try { RP.CreateInviteAndSession(window.__ds_rpt_groupid, sid, false); } catch (e) { console.warn("[ds] invite", e); }
-        return;
-      }
-
-      // Cold path (no pre-warm): launch the anchor now.
-      // Linux: ensure 480 runs the REAL game under Proton (the bundled binary is the
-      // Windows .exe; without a compat tool it won't launch and no group is created).
-      if (!IS_WIN) { try { A.SpecifyCompatTool(SPACEWAR, "proton_experimental"); } catch (e) {} }
-
-      var done = false, reg = null;
-      var finish = function () { if (reg) { try { reg.unregister(); } catch (e) {} reg = null; } };
-      reg = RP.RegisterForGroupCreated(function (groupID, hostSteam, gameid) {
-        if (done || String(gameid) !== SPACEWAR) return;        // ignore unrelated groups
-        done = true;
-        window.__ds_rpt_groupid = groupID;                       // so "Stop sharing" can CloseGroup
-        // Stream the WHOLE desktop — the friend sees your screen. Spacewar is only the
-        // anchor that makes the RPT group exist.
-        try { RP.SetStreamingDesktopToRemotePlayTogetherEnabled(groupID, true); } catch (e) {}
-        try { RP.CreateInviteAndSession(groupID, sid, false); } catch (e) { console.warn("[ds] invite", e); }
-        finish();
-      });
-      setTimeout(function () { if (!done) { finish(); console.warn("[ds] RP: Spacewar never created an RPT group (installed? Proton set?)"); } }, 30000);
-
-      // Force a FRESH group: terminate any running 480, wait for it to die, relaunch.
-      try { A.TerminateApp(SPACEWAR, false); } catch (e) {}
-      setTimeout(function () { try { A.RunGame(SPACEWAR, "", -1, 100); } catch (e) { console.warn("[ds] launch Spacewar", e); } }, 3000);
-    } catch (e) { console.warn("[ds] shareRP", e); }
-  }
-  function stopShareNative() {
-    var RP = rpRaw(), A = window.SteamClient.Apps;
-    // CloseGroup's arity varies across Steam builds (some want (groupID), some 0 args);
-    // try both, then terminate the anchor game which disbands the group regardless.
-    try { if (RP && RP.CloseGroup) { try { RP.CloseGroup(window.__ds_rpt_groupid); } catch (e1) { try { RP.CloseGroup(); } catch (e2) {} } } } catch (e) {}
-    window.__ds_rpt_groupid = null;
-    window.__ds_anchor_warm = false; window.__ds_anchor_warming = false;
-    try { A.TerminateApp(SPACEWAR, false); } catch (e) {}       // ends the anchor -> stream stops
-    window.__ds_share_mode = null;
-  }
-
-  // Pre-warm the share anchor when a call starts so "Share" is near-instant — the slow
-  // part is launching Spacewar under Proton. Launch it in the background and stash its
-  // RPT groupID; shareRP's fast path then just enables desktop streaming + invites.
-  // NOTE: while warmed, Steam shows you "Playing Spacewar" for the whole call — set your
-  // Steam "Game details" privacy to Private to hide that (no per-game/API way exists).
-  function prewarmAnchor() {
-    if (window.__ds_anchor_warm || window.__ds_anchor_warming || window.__ds_share_mode === "remoteplay") return;
-    var RP = rpRaw(); if (!RP) return;
-    var A = window.SteamClient.Apps;
-    window.__ds_anchor_warming = true;
-    if (!IS_WIN) { try { A.SpecifyCompatTool(SPACEWAR, "proton_experimental"); } catch (e) {} }
-    var reg = RP.RegisterForGroupCreated(function (groupID, hostSteam, gameid) {
-      if (String(gameid) !== SPACEWAR) return;
-      window.__ds_rpt_groupid = groupID;
-      window.__ds_anchor_warm = true; window.__ds_anchor_warming = false;
-      try { reg.unregister(); } catch (e) {}
-    });
-    try { A.TerminateApp(SPACEWAR, false); } catch (e) {}
-    setTimeout(function () { try { A.RunGame(SPACEWAR, "", -1, 100); } catch (e) {} }, 3000);
-  }
-
   // === WebRTC screen share (replaces Steam Remote Play) =====================
   // The host's capture/encode/serve is done natively by rp-webrtc.py (ffmpeg + NVENC/
   // VAAPI/QSV/x264 auto-detected -> MediaMTX -> WebRTC/WHEP); CEF can't capture but CAN
@@ -316,12 +174,24 @@
   var WCTL = "http://127.0.0.1:48592";          // local daemon control API
   // share encode prefs (resolution/bitrate dropdowns), persisted across sessions
   window.__ds_share_opts = window.__ds_share_opts || (function () {
-    var d = { h: "1080", br: "3M", fps: "30", audio: "on" };   // remote-safe default; pick "Auto" for native 4K on LAN
-    try { var s = JSON.parse(localStorage.getItem("ds_share_opts")); if (s) { d.h = s.h || d.h; d.br = s.br || d.br; } } catch (e) {}
+    // Defaults sized for a direct (UPnP/own-domain) path with AV1: 1440p60 @ 8 Mbps measured
+    // ~= H.264 at 14+ Mbps. 40 Mbps-class home uploads carry this for 2-3 viewers.
+    var d = { h: "1440", br: "8M", fps: "60", audio: "on", codec: "auto" };
+    try {
+      var s = JSON.parse(localStorage.getItem("ds_share_opts"));
+      if (s) ["h", "br", "fps", "audio", "codec"].forEach(function (k) { if (s[k]) d[k] = s[k]; });   // fps/audio were saved but never restored
+    } catch (e) {}
     return d;
   })();
+  // Shown in the share popover when something goes wrong, instead of failing silently.
+  var NO_DAEMON = "Screen-share helper isn't running. It starts with Steam — wait a few seconds and try again.";
+  // Resolves to the daemon's /start reply when the share is live, or null on failure (with
+  // window.__ds_share_error set to a human-readable reason). Never leaves share_mode set for
+  // a share that didn't start — that used to signal a dead URL and give the viewer a black tile.
   function wStartShare(src) {
     window.__ds_share_mode = "webrtc";
+    window.__ds_share_starting = true;
+    window.__ds_share_error = null;
     // src = "win:0x.." (per-app, occlusion-proof) | "geom:WxH+X+Y" or bare "WxH+X+Y" (monitor)
     var params = [];
     if (src && src.indexOf("win:") === 0) params.push("win=" + encodeURIComponent(src.slice(4)));
@@ -333,21 +203,97 @@
     if (o.br) params.push("br=" + encodeURIComponent(o.br));
     if (o.fps) params.push("fps=" + encodeURIComponent(o.fps));
     params.push("audio=" + (o.audio === "off" ? "0" : "1"));
+    params.push("codec=" + encodeURIComponent(o.codec || "auto"));
     var qs = params.length ? "?" + params.join("&") : "";
     return fetch(WCTL + "/start" + qs, { cache: "no-store" })
-      .then(function (r) { return r.json(); })
+      .then(function (r) { return r.json(); }, function () { throw new Error(NO_DAEMON); })
       .then(function (j) {
+        var cancelled = window.__ds_share_mode !== "webrtc";   // Cancel/Stop clicked while /start ran
+        window.__ds_share_starting = false;
+        if (cancelled) {
+          if (j && j.ok) fetch(WCTL + "/stop", { cache: "no-store" }).catch(function () {});
+          return null;
+        }
+        if (!j || !j.ok) throw new Error((j && j.error) || "Share failed to start");
         window.__ds_share_url = j && j.whep;                 // LAN/public url for the viewer
         window.__ds_share_ice = (j && j.ice) || null;        // TURN/STUN servers for the viewer
         window.__ds_share_ws = (j && j.ws) || null;
         window.__ds_share_audio = !!(j && j.audio);           // did audio actually make it in?
+        window.__ds_share_codec = (j && j.codec) || "h264";   // what the host actually encodes
+        window.__ds_share_lan = (j && j.lan_whep) || null;    // same-house viewers (no NAT hairpin)
+        window.__ds_share_acodec = (j && j.acodec) || null;   // "opus" = WebRTC carries audio too
         window.__ds_share_local = "http://127.0.0.1:8889/screen/whep";   // loopback for self-preview
-        window.__ds_share_info = j; return j;
+        window.__ds_share_info = j;
+        window.__ds_cf_gen = null;              // baseline is taken by the watcher's first poll
+        window.__ds_share_dead = 0;
+        startShareWatch();
+        return j;
       })
-      .catch(function (e) { console.warn("[ds] wStartShare", e); return null; });
+      .catch(function (e) {
+        console.warn("[ds] wStartShare", e);
+        var cancelled = window.__ds_share_mode !== "webrtc";
+        window.__ds_share_starting = false;
+        window.__ds_share_mode = null; window.__ds_share_url = null;
+        window.__ds_share_error = cancelled ? null : ((e && e.message) || String(e));
+        return null;
+      });
+  }
+  // Watches a live share via /ping (every 5s, only while sharing):
+  //  - Cloudflare *quick* tunnels are unmanaged and do die mid-share; the daemon's watchdog
+  //    rebuilds one, but the replacement has a NEW random hostname, so the viewer would sit
+  //    reconnecting to the dead one. Re-signal the fresh URL over chat (silent — see
+  //    patchSilenceSignals) when the daemon's cf_gen counter moves.
+  //  - The capture can end underneath us (Wayland: "stop sharing" in the system tray; or the
+  //    encoder/daemon died). Two dead polls in a row -> end the share properly: tell the
+  //    viewer, un-red the button, say why. Previously the UI said "Sharing live" forever.
+  function startShareWatch() {
+    if (window.__ds_cf_watch) return;
+    window.__ds_cf_watch = setInterval(function () {
+      if (window.__ds_share_mode !== "webrtc") {
+        clearInterval(window.__ds_cf_watch); window.__ds_cf_watch = null; return;
+      }
+      if (window.__ds_share_starting) return;            // a restart (option change) is mid-flight
+      fetch(WCTL + "/ping", { cache: "no-store" })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (window.__ds_share_mode !== "webrtc" || window.__ds_share_starting) return;
+          if (j && j.running === false) {
+            if (++window.__ds_share_dead >= 2) shareEnded("Share stopped — the capture ended (stopped from the system tray, or it crashed).");
+            return;
+          }
+          window.__ds_share_dead = 0;
+          if (!j || typeof j.cf_gen !== "number") return;
+          if (window.__ds_cf_gen === null || window.__ds_cf_gen === undefined) {
+            window.__ds_cf_gen = j.cf_gen; return;          // first poll = baseline
+          }
+          if (j.cf_gen === window.__ds_cf_gen) return;
+          window.__ds_cf_gen = j.cf_gen;
+          window.__ds_share_url = j.whep || window.__ds_share_url;
+          window.__ds_share_ws = j.ws || window.__ds_share_ws;
+          window.__ds_share_lan = j.lan_whep || window.__ds_share_lan;
+          console.warn("[ds] tunnel rebuilt -> re-signaling viewer", j.ws);
+          sendSignalToAcct(window.__ds_sig_acct, currentSig());
+        })
+        .catch(function () {
+          if (window.__ds_share_mode === "webrtc" && !window.__ds_share_starting &&
+              ++window.__ds_share_dead >= 2) shareEnded("Share stopped — the screen-share helper exited.");
+        });
+    }, 5000);
+  }
+  function currentSig() {
+    return sigPayload(window.__ds_share_url, window.__ds_share_ice, window.__ds_share_ws,
+                      window.__ds_share_audio, window.__ds_share_codec, window.__ds_share_lan,
+                      window.__ds_share_acodec);
+  }
+  function shareEnded(why) {
+    console.warn("[ds] " + why);
+    try { sendSignalToAcct(window.__ds_sig_acct, "stop"); } catch (e) {}
+    wStopShare();
+    window.__ds_share_error = why;
+    try { if (window.__ds_share_refresh) window.__ds_share_refresh(); } catch (e) {}
   }
   function wStopShare() {
-    window.__ds_share_mode = null; window.__ds_share_url = null;
+    window.__ds_share_mode = null; window.__ds_share_url = null; window.__ds_share_starting = false;
     fetch(WCTL + "/stop", { cache: "no-store" }).catch(function () {});
     if (window.__ds_pc) { try { window.__ds_pc.close(); } catch (e) {} window.__ds_pc = null; }
   }
@@ -365,10 +311,21 @@
       var pc = new RTCPeerConnection({ iceServers: iceServers });
       v.__pc = pc;
       pc.addTransceiver("video", { direction: "recvonly" });
+      // the host's WebRTC copy carries Opus desktop audio when it signaled ac=opus
+      if (v.__wantAudio && window.__ds_view_audio && window.__ds_view_acodec === "opus")
+        pc.addTransceiver("audio", { direction: "recvonly" });
       pc.ontrack = function (e) {
         if (v.__wsLive) return;   // WS fallback already rendering; don't let WebRTC hijack srcObject (it wins over src)
-        v.srcObject = e.streams[0];
+        // video and audio can arrive as separate streams: merge into one per connection
+        if (v.__pcStreamOf !== pc) { v.__pcStreamOf = pc; v.__pcStream = new MediaStream(); }
+        v.__pcStream.addTrack(e.track);
+        if (v.srcObject !== v.__pcStream) v.srcObject = v.__pcStream;
         if (v.__dsAutoTimer) { clearTimeout(v.__dsAutoTimer); v.__dsAutoTimer = null; }
+        // WebRTC won the race: retire any WebSocket attempt running alongside it
+        v.__rtcLive = true; v.__wentWs = true;
+        if (v.__wsCleanup) { try { v.__wsCleanup(); } catch (e2) {} v.__wsCleanup = null; }
+        v.__wsGen = (v.__wsGen || 0) + 1;
+        if (v.__ws) { try { v.__ws.close(); } catch (e3) {} v.__ws = null; }
         if (v.play) v.play().catch(function () {});
       };
       // Remote viewer with no TURN relay: ICE can't connect -> fall back to the WS tunnel
@@ -384,21 +341,28 @@
           setTimeout(function () { if (v.__pc === pc && !(v.srcObject && v.srcObject.active)) wConnectShare(whepUrl, v, tries - 1); }, 800);
         } else { console.warn("[ds] wConnectShare gave up", why); }
       };
+      // One offer, posted to each endpoint in turn: the host's public URL, then its LAN URL
+      // (a same-house viewer can't reach the public address when the router doesn't
+      // hairpin). Reusing the offer skips a second ICE gathering wait.
+      var endpoints = [whepUrl];
+      if (v.__whepAlt && v.__whepAlt !== whepUrl) endpoints.push(v.__whepAlt);
+      var post = function (i) {
+        var u = endpoints[i];
+        var localish = /^https:/.test(u) || /^https?:\/\/(127\.0\.0\.1|localhost)\b/.test(u);
+        var url = localish ? u : (WCTL + "/whep?target=" + encodeURIComponent(u));
+        return fetch(url, { method: "POST", headers: { "Content-Type": "application/sdp" }, body: pc.localDescription.sdp })
+          .then(function (res) { if (!res.ok) throw new Error("whep " + res.status); return res.text(); })
+          .then(function (ans) { if (!ans || ans.indexOf("v=0") !== 0) throw new Error("empty answer"); return ans; })
+          .catch(function (e) { if (i + 1 < endpoints.length) return post(i + 1); throw e; });
+      };
       pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).then(function () {
         return new Promise(function (r) {
           if (pc.iceGatheringState === "complete") return r();
           pc.onicegatheringstatechange = function () { if (pc.iceGatheringState === "complete") r(); };
-          setTimeout(r, 2000);
+          setTimeout(r, 1000);   // host candidates are instant; don't hold the whole connect for STUN
         });
-      }).then(function () {
-        var localish = /^https:/.test(whepUrl) || /^https?:\/\/(127\.0\.0\.1|localhost)\b/.test(whepUrl);
-        var url = localish ? whepUrl : (WCTL + "/whep?target=" + encodeURIComponent(whepUrl));
-        return fetch(url, { method: "POST", headers: { "Content-Type": "application/sdp" }, body: pc.localDescription.sdp });
-      }).then(function (res) { if (!res.ok) throw new Error("whep " + res.status); return res.text(); })
-        .then(function (ans) {
-          if (!ans || ans.indexOf("v=0") !== 0) throw new Error("empty answer");
-          return pc.setRemoteDescription({ type: "answer", sdp: ans });
-        })
+      }).then(function () { return post(0); })
+        .then(function (ans) { if (v.__pc === pc) return pc.setRemoteDescription({ type: "answer", sdp: ans }); })
         .catch(function (e) { retry(e && e.message || e); });
     } catch (e) { console.warn("[ds] wConnectShare", e); }
   }
@@ -408,20 +372,29 @@
   // the WS/fMP4 tunnel. Remote viewers (no TURN) thus skip straight to WS, no black wait.
   function wConnectAuto(url, v) {
     if (v.__dsAutoTimer) { clearTimeout(v.__dsAutoTimer); v.__dsAutoTimer = null; }
+    // retire any WS/MSE attempt (its handlers + pending retries check this generation)
+    if (v.__wsCleanup) { try { v.__wsCleanup(); } catch (e) {} v.__wsCleanup = null; }
+    v.__wsGen = (v.__wsGen || 0) + 1;
     if (v.__ws) { try { v.__ws.close(); } catch (e) {} v.__ws = null; }   // drop a stale WS before reconnecting
     v.__wsLive = false;
     var ws = window.__ds_view_ws;
     // Single fallback into the WS/fMP4 tunnel path. Idempotent: fires on whichever of
     // (WebRTC ICE failure) or (safety timer w/ no frame) happens first.
+    // Starts the WS path ALONGSIDE WebRTC rather than instead of it: whichever renders first
+    // wins (ontrack retires the WS; the WS's first frame retires WebRTC). Killing WebRTC here
+    // used to abort a LAN connect seconds before its answer arrived, leaving the viewer on a
+    // WS path that can't work there.
     var goWs = function () {
-      if (v.__wentWs || !ws) return;
+      if (v.__wentWs || v.__rtcLive || !ws) return;
       v.__wentWs = true;
       if (v.__dsAutoTimer) { clearTimeout(v.__dsAutoTimer); v.__dsAutoTimer = null; }
-      // tear WebRTC down — nulling __pc also stops wConnectShare's retry loop (it guards on v.__pc === pc)
-      try { if (v.__pc) { v.__pc.close(); v.__pc = null; } } catch (e) {}
       wConnectWsMse(ws, v);
     };
     v.__wentWs = false;
+    v.__rtcLive = false;
+    v.__whepAlt = window.__ds_view_lan || null;   // the other endpoint wConnectShare may try
+    v.__wantAudio = true;                          // (the self-preview never asks for audio)
+    v.__dsAuto = function () { if (window.__ds_view_url === url) wConnectAuto(url, v); };
     v.__dsGoWs = goWs;            // wConnectShare invokes this the moment ICE fails (remote w/o TURN)
     wConnectShare(url, v);
     if (ws) {
@@ -431,58 +404,124 @@
       v.__dsAutoTimer = setTimeout(function () {
         v.__dsAutoTimer = null;
         if (!v.videoWidth) goWs();
-      }, 2500);
+      }, v.__whepAlt ? 5000 : 2500);   // leave room for one public->LAN WHEP retry
     }
   }
   // Viewer (universal fallback): play fragmented-MP4 streamed over a WebSocket via MSE.
   // Works for any remote viewer through the cloudflared tunnel (no WebRTC/UDP needed).
+  // Reconnect backoff for the WS/fMP4 viewer. A dead endpoint (host quit, tunnel gone)
+  // used to be retried every 600ms forever; back off to ~6s so a long outage costs nothing,
+  // and reset on any successful media so a normal capture restart still reconnects fast.
+  function wsRetryDelay(v) {
+    v.__wsTries = (v.__wsTries || 0) + 1;
+    return Math.min(6000, 400 * Math.pow(1.7, v.__wsTries - 1));
+  }
   function wConnectWsMse(wsUrl, v) {
     try {
       if (!window.MediaSource) { console.warn("[ds] MSE unavailable"); return; }
+      if (v.__rtcLive) return;                       // WebRTC is already playing this share
       if (v.__ws) { try { v.__ws.close(); } catch (e) {} v.__ws = null; }
       // CRITICAL: srcObject takes precedence over src in the HTML media spec, so if a
       // prior (dead, frameless) WebRTC track left srcObject set, the MSE <video> stays
       // black forever. Clear it before handing the element to MediaSource.
       try { v.srcObject = null; } catch (e) {}
       if (v.src) { try { URL.revokeObjectURL(v.src); } catch (e) {} }
+      // This function re-runs on every reconnect, so anything bound to the ELEMENT (not to
+      // the MediaSource) has to be torn down first — otherwise each attempt leaves behind a
+      // listener mutating a dead closure. `gen` supersedes stale handlers that still fire.
+      if (v.__wsCleanup) { try { v.__wsCleanup(); } catch (e) {} }
+      var gen = (v.__wsGen = (v.__wsGen || 0) + 1);
       var ms = new MediaSource();
       v.src = URL.createObjectURL(ms);
-      v.addEventListener("loadeddata", function () { v.__wsLive = true; }, { once: true });
-      var sb = null, queue = [];
+      var sb = null, queue = [], gone = false, ws0 = null, noMedia = null;
+      // A fatal MSE/decode error (corrupt fragment, codec mismatch, GPU decoder reset)
+      // kills playback WITHOUT closing the WebSocket, so ws.onclose never fires and the
+      // tile stays black for the rest of the call. Detect it and rebuild from scratch.
+      var restart = function (why) {
+        if (gone || v.__wsGen !== gen) return;
+        gone = true;
+        if (noMedia) { clearTimeout(noMedia); noMedia = null; }
+        console.warn("[ds] MSE restart:", why);
+        if (v.__ws === ws0) v.__ws = null;
+        try { if (ws0) ws0.close(); } catch (e) {}
+        if (!window.__ds_view_ws) return;            // intentional stop — don't loop
+        // Don't get stuck on the WebSocket path: it only knows the host's PUBLIC address,
+        // which a viewer in the same house can't reach when the router doesn't hairpin,
+        // while WebRTC there works fine over the LAN address. After a few failed WS tries,
+        // start over from WebRTC (which alternates public <-> LAN endpoints).
+        if (v.__rtcLive) return;
+        if ((v.__wsTries || 0) >= 3 && v.__dsAuto) { v.__wsTries = 0; setTimeout(v.__dsAuto, 500); return; }
+        setTimeout(function () {
+          // v.__wsGen moves on if wConnectAuto restarted WebRTC meanwhile: don't clobber it
+          if (window.__ds_view_ws && !v.__ws && v.__wsGen === gen) wConnectWsMse(window.__ds_view_ws, v);
+        }, wsRetryDelay(v));
+      };
       // Adaptive jitter buffer: `target` = seconds we keep buffered ahead of live. Grows on
       // stalls (bad link -> smoother, higher latency), decays when stable (good link -> low
       // latency). This "forces smooth" automatically without anyone touching a setting.
       var bufMin = 0.35, bufMax = 3.0, target = 0.5, lastStall = 0, lastDecay = 0;
-      v.addEventListener("waiting", function () {            // playback underran -> need cushion
+      var onWaiting = function () {                   // playback underran -> need cushion
         target = Math.min(bufMax, target + 0.6);
         lastStall = Date.now();
-      });
+      };
+      var onVidErr = function () { restart("video error " + ((v.error || {}).code)); };
+      var onLoaded = function () {
+        v.__wsLive = true; v.__wsTries = 0;
+        // WS won the race: stop WebRTC and its retry loop (it guards on v.__pc === pc)
+        if (!v.__rtcLive && v.__pc) { try { v.__pc.close(); } catch (e) {} v.__pc = null; }
+        if (noMedia) { clearTimeout(noMedia); noMedia = null; }
+      };
+      v.addEventListener("waiting", onWaiting);
+      v.addEventListener("error", onVidErr);
+      v.addEventListener("loadeddata", onLoaded);
+      v.__wsCleanup = function () {
+        v.removeEventListener("waiting", onWaiting);
+        v.removeEventListener("error", onVidErr);
+        v.removeEventListener("loadeddata", onLoaded);
+        if (noMedia) { clearTimeout(noMedia); noMedia = null; }
+      };
+      // "Connected but nothing decodes" is the classic remote failure: a dead cloudflared
+      // tunnel still completes the TCP/WS handshake, and a host whose encoder died sends no
+      // fragments. Neither closes the socket, so without this the tile just sits black.
+      noMedia = setTimeout(function () { restart("no media after 8s"); }, 8000);
       function pump() {
+        if (gone || v.__wsGen !== gen) return;
         if (!sb || sb.updating || !queue.length) return;
+        if (ms.readyState !== "open") { restart("mediasource " + ms.readyState); return; }
         var chunk = queue[0];
         try { sb.appendBuffer(chunk); queue.shift(); }
         catch (e) {
           if (e && e.name === "QuotaExceededError" && v.buffered.length) {
             try { sb.remove(0, Math.max(0, v.currentTime - 2)); } catch (e2) {}
             // updateend (from remove) re-fires pump; leave the chunk queued to retry
+          } else if (e && e.name === "InvalidStateError") {
+            restart("appendBuffer " + e.name);       // buffer detached — not recoverable here
           } else { queue.shift(); }
         }
       }
       ms.addEventListener("sourceopen", function () {
+        if (gone || v.__wsGen !== gen) return;       // superseded before the source opened
         try {
           // include the AAC track in the codec string only when the host signaled audio,
           // else MSE waits forever for an audio track that never arrives.
-          var codec = window.__ds_view_audio
-            ? 'video/mp4; codecs="avc1.640034,mp4a.40.2"'   // High@5.2 + AAC-LC
-            : 'video/mp4; codecs="avc1.640034"';            // High@5.2, video only
+          // video codec as signaled by the host (AV1 Main L5.1 or H.264 High@5.2 — both cover
+          // 4K60); AAC only when the host signaled audio
+          var vc = window.__ds_view_codec === "av1" ? "av01.0.13M.08" : "avc1.640034";
+          var ac = window.__ds_view_acodec === "opus" ? "opus" : "mp4a.40.2";
+          var codec = 'video/mp4; codecs="' + vc + (window.__ds_view_audio ? "," + ac + '"' : '"');
+          if (MediaSource.isTypeSupported && !MediaSource.isTypeSupported(codec))
+            console.warn("[ds] this client can't decode " + codec + " — ask the host to pick H.264");
           sb = ms.addSourceBuffer(codec);
           sb.mode = "sequence";
           sb.addEventListener("updateend", pump);
-        } catch (e) { console.warn("[ds] addSourceBuffer", e); return; }
+          sb.addEventListener("error", function () { restart("sourcebuffer error"); });
+        } catch (e) { restart("addSourceBuffer " + (e && e.message || e)); return; }
         var ws = new WebSocket(wsUrl);
+        ws0 = ws;
         ws.binaryType = "arraybuffer";
         v.__ws = ws;
         ws.onmessage = function (ev) {
+          if (gone || v.__wsGen !== gen) { try { ws.close(); } catch (e) {} return; }
           queue.push(new Uint8Array(ev.data));
           if (queue.length > 240) queue.splice(0, queue.length - 240);   // bound memory
           pump();
@@ -503,80 +542,17 @@
         ws.onerror = function (e) { console.warn("[ds] ws err", e); };
         ws.onclose = function () {
           if (v.__ws !== ws) return;                 // superseded by a newer connection
-          v.__ws = null;
-          // the capture may have just restarted (live resolution/bitrate change) — reconnect
-          // to the same stream. Guard on __ds_view_ws so an intentional stop doesn't loop.
-          if (window.__ds_view_ws) setTimeout(function () {
-            if (window.__ds_view_ws && !v.__ws) wConnectWsMse(window.__ds_view_ws, v);
-          }, 600);
+          // the capture may have just restarted (live resolution/bitrate change), or the
+          // host dropped us for falling too far behind — either way rebuild. Guard on
+          // __ds_view_ws so an intentional stop doesn't loop. Backoff, so a dead host
+          // isn't hammered every 600ms for the rest of the call.
+          restart("ws closed");
         };
       });
     } catch (e) { console.warn("[ds] wConnectWsMse", e); }
   }
-  // Live control of the running capture server (switch source / resolution without
-  // dropping the RPT session). Reachable because Chromium lets https pages fetch
-  // http://127.0.0.1 (localhost is "potentially trustworthy").
-  function rpSources(cb) {
-    fetch(RPCTL + "/sources", { cache: "no-store" }).then(function (r) { return r.json(); }).then(cb).catch(function () { cb(null); });
-  }
-  function rpRes() { var c = window.__ds_capOpts || {}; return (c.scale && c.scale !== "none") ? c.scale : "none"; }
-  function rpSetSource(geom) {   // a monitor region
-    fetch(RPCTL + "/set?geom=" + encodeURIComponent(geom) + "&res=" + encodeURIComponent(rpRes()), { cache: "no-store" }).catch(function () {});
-  }
-  function rpSetWindow(id) {       // a specific app window (id = X11 xid on Linux, title on Windows)
-    fetch(RPCTL + "/set?win=" + encodeURIComponent(id) + "&res=" + encodeURIComponent(rpRes()), { cache: "no-store" }).catch(function () {});
-  }
-  function rpSetRes(res) {
-    fetch(RPCTL + "/res?v=" + encodeURIComponent(res), { cache: "no-store" }).catch(function () {});
-  }
-
-  // --- Watcher side: dock the incoming Remote Play stream into the call UI ------
-  // The RPT video is drawn by Steam's native streaming client, so it can't live
-  // inside a DOM element. But the streaming client config exposes windowed + window
-  // position/size (verified), so we force the stream out of fullscreen and park its
-  // native window exactly over a "screen share" tile in the call stage — re-applying
-  // each tick so it stays put ("as a third person", click the tile to enlarge).
-  var __ds_w = { expanded: false, last: "", tick: 0 };
-  function rpClientCfg() {
-    try { return window.RemotePlayStore_SteamUI && window.RemotePlayStore_SteamUI.m_clientConfig; } catch (e) { return null; }
-  }
-  // Are we (the watcher) currently receiving a Remote Play stream?
-  function isWatchingStream() {
-    try {
-      var s = window.RemotePlayStore_SteamUI; if (!s) return false;
-      var cs = s.m_remoteClientStreams;
-      var n = cs ? (Array.isArray(cs) ? cs.length : (cs.size != null ? cs.size : Object.keys(cs).length)) : 0;
-      if (n > 0) return true;
-      if (s.m_settings && s.m_settings.unStreamingSessionID) return true;
-      if (s.BIsStreamingRemotePlayTogetherGame && s.BIsStreamingRemotePlayTogetherGame()) return true;
-    } catch (e) {}
-    return false;
-  }
-  // Force the native stream window windowed + positioned over `el` (screen coords).
-  // Throttled: only re-pushes the config when the target rect actually moves (or
-  // every ~2s) so we're not spamming SetStreamingClientConfig at 150ms.
-  function dockStreamInto(el, doc) {
-    var cc = rpClientCfg(); if (!cc || !el) return;
-    try {
-      var view = doc.defaultView || window;
-      var r = el.getBoundingClientRect();
-      var dpr = view.devicePixelRatio || 1;
-      var x = Math.round((view.screenX + r.left) * dpr);
-      var y = Math.round((view.screenY + r.top) * dpr);
-      var w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
-      if (w < 120 || h < 90) return;
-      var sig = [x, y, w, h].join(",");
-      __ds_w.tick++;
-      if (sig === __ds_w.last && __ds_w.tick % 14 !== 0) return;   // unchanged + not the periodic re-assert
-      __ds_w.last = sig;
-      var RP = rpRaw(); if (!RP) return;
-      cc.set_windowed(true);
-      cc.set_window_position_x(x); cc.set_window_position_y(y);
-      cc.set_window_width(w); cc.set_window_height(h);
-      RP.SetStreamingClientConfig(cc);
-      RP.SetStreamingClientConfigEnabled(true);   // best-effort; placement may apply even if the gate doesn't stick
-    } catch (e) {}
-  }
+  // share-tile UI state (in-app enlarged view)
+  var __ds_w = { expanded: false };
 
   function chatTweaks(doc) {
     // The single header bar is Steam's OWN tab strip (.chatTabList) — CSS styles it to
@@ -716,6 +692,7 @@
     ssrcRow.appendChild(ssrcLbl); ssrcRow.appendChild(ssrc); spop.appendChild(ssrcRow);
     var fillSources = function () {
       fetch(WCTL + "/sources", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
+        if (sstatus.dataset.err === "daemon") { sstatus.dataset.err = ""; srefresh(); }
         ssrc.textContent = "";
         var clip = function (s) { return s.length > 36 ? s.slice(0, 36) + "…" : s; };
         var group = function (label, items, mk) {
@@ -735,7 +712,10 @@
         if (window.__ds_share_geom) ssrc.value = window.__ds_share_geom;
         if (!ssrc.value && ssrc.options.length) ssrc.value = ssrc.options[0].value;
         window.__ds_share_geom = ssrc.value || window.__ds_share_geom;
-      }).catch(function () {});
+      }).catch(function () {
+        if (window.__ds_share_mode === "webrtc") return;
+        sstatus.textContent = NO_DAEMON; sstatus.dataset.err = "daemon";
+      });
     };
     var sstatus = el(doc, "div", "ds-vs-label ds-stream-status"); spop.appendChild(sstatus);
     // self-preview: your own stream looped back via 127.0.0.1 (mixed-content-exempt, no
@@ -760,9 +740,12 @@
         try { localStorage.setItem("ds_share_opts", JSON.stringify(opts)); } catch (e) {}
         if (window.__ds_share_mode === "webrtc") {     // apply live: restart capture + re-signal viewer
           if (sstatus) sstatus.textContent = "Applying " + label + "…";
-          wStartShare(window.__ds_share_geom).then(function () {
+          wStartShare(window.__ds_share_geom).then(function (j) {
             if (sprev) sprev.dataset.live = "";
-            if (window.__ds_share_url) { try { sendSignal(doc, sigPayload(window.__ds_share_url, window.__ds_share_ice, window.__ds_share_ws, window.__ds_share_audio)); } catch (e) {} }
+            try {
+              if (j) sendSignal(doc, currentSig());
+              else sendSignal(doc, "stop");          // restart failed: don't leave the viewer on a dead stream
+            } catch (e) {}
             try { srefresh(); } catch (e) {}
           });
         }
@@ -770,18 +753,27 @@
       row.appendChild(lb); row.appendChild(sel); spop.appendChild(row);
     };
     addShareSel("Resolution", "h", [["Auto", "auto"], ["4K", "2160"], ["1440p", "1440"], ["1080p", "1080"], ["720p", "720"], ["480p", "480"]]);
-    addShareSel("Bitrate", "br", [["Potato (0.5M)", "0.5M"], ["Low (1M)", "1M"], ["Smooth (1.5M)", "1.5M"], ["Balanced (3M)", "3M"], ["Sharp (6M)", "6M"]]);
+    addShareSel("Bitrate", "br", [["Potato (0.5M)", "0.5M"], ["Low (1M)", "1M"], ["Smooth (1.5M)", "1.5M"], ["Balanced (3M)", "3M"], ["Sharp (6M)", "6M"], ["Great (8M)", "8M"], ["Ultra (12M)", "12M"], ["Max (20M)", "20M"]]);
     addShareSel("FPS", "fps", [["15 fps", "15"], ["20 fps", "20"], ["30 fps", "30"], ["60 fps", "60"]]);
     addShareSel("Audio", "audio", [["On", "on"], ["Off", "off"]]);
+    addShareSel("Codec", "codec", [["Auto (AV1 if your GPU can)", "auto"], ["H.264 (compatibility)", "h264"]]);
     var sgo = el(doc, "button", "ds-stream-go"); spop.appendChild(sgo);
     var srefresh = function () {
       var sharing = window.__ds_share_mode === "webrtc";
+      var starting = sharing && window.__ds_share_starting;
       shareB.classList.toggle("sharing", sharing);
-      sgo.textContent = sharing ? "Stop sharing" : ("Share my screen to " + (chatFriendName(doc) || "friend"));
+      sgo.textContent = starting ? "Cancel" : sharing ? "Stop sharing" : ("Share my screen to " + (chatFriendName(doc) || "friend"));
       sgo.classList.toggle("ds-stream-stop", sharing);
-      sstatus.textContent = sharing
-        ? ("Sharing live (" + ((window.__ds_share_info && window.__ds_share_info.encoder) || "?") + ") — preview below.")
-        : "Streams a monitor to your friend — WebRTC, low latency, in-call.";
+      sstatus.classList.toggle("ds-stream-error", !sharing && !!window.__ds_share_error);
+      sstatus.textContent = starting
+        ? "Starting… if a system screen picker pops up, choose what to share there."
+        : sharing
+        ? (function (i) {
+            i = i || {};
+            var route = i.via === "public" || i.direct ? "direct" : (i.via === "tunnel" ? "via relay" : "LAN");
+            return "Sharing live — " + (i.codec === "av1" ? "AV1" : "H.264") + " (" + (i.encoder || "?") + "), " + route + ". Preview below.";
+          })(window.__ds_share_info)
+        : (window.__ds_share_error || "Streams a monitor to your friend — WebRTC, low latency, in-call.");
       // self-preview loopback so you can confirm the share works solo
       if (sharing) {
         sprev.style.display = "block";
@@ -796,8 +788,10 @@
         try { sendSignal(doc, "stop"); } catch (e) {}     // tell the viewer to disconnect
         wStopShare(); setTimeout(srefresh, 60);
       } else {
-        wStartShare(window.__ds_share_geom).then(function () {
-          if (window.__ds_share_url) { try { sendSignal(doc, sigPayload(window.__ds_share_url, window.__ds_share_ice, window.__ds_share_ws, window.__ds_share_audio)); } catch (e) {} }  // auto-signal the viewer (url + ICE + audio)
+        var p = wStartShare(window.__ds_share_geom);
+        srefresh();                                   // show "Starting…" while /start runs
+        p.then(function (j) {
+          if (j) { try { sendSignal(doc, currentSig()); } catch (e) {} }  // auto-signal the viewer (url + ICE + audio)
           srefresh();
         });
       }
@@ -807,8 +801,9 @@
       [].forEach.call(stage.querySelectorAll(".ds-voice-settings"), function (pp) { if (pp !== spop) pp.style.display = "none"; });
       var show = spop.style.display !== "block";
       spop.style.display = show ? "block" : "none";
-      if (show) { fillSources(); srefresh(); }
+      if (show) { window.__ds_share_refresh = srefresh; fillSources(); srefresh(); }
     });
+    window.__ds_share_refresh = srefresh;
     shareG.appendChild(shareB); shareG.appendChild(spop);
     bar.appendChild(shareG);
 
@@ -838,8 +833,13 @@
 
     // When the call ends, stop any share we're hosting + drop any stream we're viewing.
     if (!inCall) {
-      if (window.__ds_share_mode === "webrtc") { try { wStopShare(); } catch (e) {} }
-      if (window.__ds_view_url) { window.__ds_view_url = null; if (window.__ds_pc) { try { window.__ds_pc.close(); } catch (e) {} window.__ds_pc = null; } }
+      // tell the viewer too: in a group call they may still be connected, and an unsent
+      // "stop" left the last share URL as the newest signal -> a dead tile next call
+      if (window.__ds_share_mode === "webrtc") { try { sendSignalToAcct(window.__ds_sig_acct, "stop"); wStopShare(); } catch (e) {} }
+      // Forget a received share only when a call we were IN ends — not while still ringing:
+      // the host can start sharing before we answer, and clearing it here meant a friend who
+      // picked up after "Share" was pressed never saw the stream.
+      if (window.__ds_view_url && window.__ds_view_incall) { window.__ds_view_incall = false; window.__ds_view_url = null; window.__ds_view_from = null; if (window.__ds_pc) { try { window.__ds_pc.close(); } catch (e) {} window.__ds_pc = null; } }
     }
 
     var wins = [].slice.call(doc.querySelectorAll(".chatWindow"));
@@ -866,6 +866,7 @@
         }
       }
     }
+    if (inCall) window.__ds_view_incall = true;
     var shouldShow = inCall && viewingCall && !!main;
 
     // Cleanup: drop every stage that isn't the intended one (fixes "stuck on the
@@ -928,7 +929,9 @@
     // show a "screen share" tile (the third person) with the live WebRTC <video> right
     // in it. Click to enlarge. This is real DOM video — no native window docking.
     var shareTile = tiles.querySelector(".ds-share-tile");
-    if (window.__ds_view_url) {
+    var callAcct = activeOneOnOneAcct();
+    // a 1:1 call only shows a share sent by THAT friend (group calls can't be attributed)
+    if (window.__ds_view_url && (!callAcct || !window.__ds_view_from || callAcct === window.__ds_view_from)) {
       if (!shareTile) {
         shareTile = el(doc, "div", "ds-tile ds-share-tile");
         if (!shareTile.style.position) shareTile.style.position = "relative";
@@ -1072,24 +1075,32 @@
   // viewer gets the host's Cloudflare TURN credentials (needed to relay across NATs).
   // "<url>|ice=<b64 JSON>|ws=<enc>|aud=1" — base64 and encodeURIComponent never emit '|',
   // so a simple split is safe and order-independent.
-  function sigPayload(url, ice, ws, audio) {
+  function sigPayload(url, ice, ws, audio, codec, lan, acodec) {
     var p = url;
     if (ice && ice.length) { try { p += "|ice=" + btoa(JSON.stringify(ice)); } catch (e) {} }
     if (ws) p += "|ws=" + encodeURIComponent(ws);
     if (audio) p += "|aud=1";
+    if (codec && codec !== "h264") p += "|cdc=" + codec;   // absent = H.264 (older hosts)
+    if (lan && lan !== url) p += "|lan=" + encodeURIComponent(lan);
+    if (audio && acodec === "opus") p += "|ac=opus";        // absent = AAC, WS path only
     return p;
   }
   function parseSignal(payload) {
     var parts = payload.split("|");
-    var out = { url: parts[0], ice: null, ws: null, audio: false };
+    var out = { url: parts[0], ice: null, ws: null, audio: false, codec: "h264", lan: null, acodec: "aac" };
     for (var i = 1; i < parts.length; i++) {
       var s = parts[i];
       if (s.indexOf("ice=") === 0) { try { out.ice = JSON.parse(atob(s.slice(4))); } catch (e) {} }
       else if (s.indexOf("ws=") === 0) { try { out.ws = decodeURIComponent(s.slice(3)); } catch (e) {} }
       else if (s.indexOf("aud=") === 0) { out.audio = s.slice(4) === "1"; }
+      else if (s.indexOf("cdc=") === 0) { out.codec = s.slice(4) === "av1" ? "av1" : "h264"; }
+      else if (s.indexOf("ac=") === 0) { out.acodec = s.slice(3) === "opus" ? "opus" : "aac"; }
+      else if (s.indexOf("lan=") === 0) { try { out.lan = decodeURIComponent(s.slice(4)); } catch (e) {} }
     }
     return out;
   }
+  // pure helpers, exposed for tests/test_plugin.mjs (no effect in Steam)
+  window.__ds_test = { sigPayload: sigPayload, parseSignal: parseSignal, signalIsFresh: signalIsFresh };
   function friendAcctForDoc(doc) {
     try {
       var name = chatFriendName(doc).toLowerCase();
@@ -1100,12 +1111,20 @@
       return f ? f.m_unAccountID : null;
     } catch (e) { return null; }
   }
-  function sendSignal(doc, payload) {
+  function sendSignalToAcct(acct, payload) {
     try {
-      var acct = friendAcctForDoc(doc); if (acct == null) return;
+      if (acct == null) return;
       var fc = window.g_FriendsUIApp.m_ChatStore.GetFriendChat(acct);
       if (fc && fc.SendChatMessageInternal) fc.SendChatMessageInternal(SIG + payload);
-    } catch (e) { console.warn("[ds] sendSignal", e); }
+    } catch (e) { console.warn("[ds] sendSignalToAcct", e); }
+  }
+  function sendSignal(doc, payload) {
+    var acct = friendAcctForDoc(doc);
+    if (acct == null) return;
+    // remember who we're sharing with, so the tunnel watcher can re-signal a rebuilt URL
+    // without needing a chat document in hand.
+    window.__ds_sig_acct = acct;
+    sendSignalToAcct(acct, payload);
   }
   // Silence our screen-share signaling messages so start/stop don't ping the friend (sound +
   // unread + toast). Steam already has a gate for this — BShouldSilentlyAddMessage(e) returns
@@ -1129,6 +1148,18 @@
       console.log("[ds] screen-share signaling silenced (no start/stop notifications)");
     } catch (e) {}
   }
+  // Should a signal message be acted on? `seen` = last ordinal handled for this friend
+  // (undefined on the first poll after Steam starts). On that first poll the newest signal in
+  // the history may be days old — a share whose "stop" never got sent — and acting on it put a
+  // dead share tile in every later call with that friend. So on first sight, only a RECENT
+  // signal counts (covers a Steam restart mid-share); older ones are just marked as seen.
+  var SIGNAL_FRESH_S = 10 * 60;
+  function signalIsFresh(m, seen, nowSec) {
+    var ord = m.unOrdinal;
+    if (seen !== undefined) return (ord || 0) > seen;
+    var ts = +(m.rtTimestamp || m.m_rtTimestamp || 0);
+    return !ts || nowSec - ts < SIGNAL_FRESH_S;
+  }
   function pollSignals() {
     try {
       var app = window.g_FriendsUIApp, fs = app.m_FriendStore, cs = app.m_ChatStore;
@@ -1142,11 +1173,16 @@
           if (!m.strMessageInternal || m.strMessageInternal.indexOf(SIG) !== 0) continue;
           if (m.unAccountID !== f.m_unAccountID) continue;   // only act on what the FRIEND sent
           var ord = m.unOrdinal || i;
-          if ((window.__ds_sig_seen[f.m_unAccountID] || 0) >= ord) break;   // already handled
-          window.__ds_sig_seen[f.m_unAccountID] = ord;
+          var seen = window.__ds_sig_seen[f.m_unAccountID];
+          window.__ds_sig_seen[f.m_unAccountID] = Math.max(seen || 0, ord);
+          if (!signalIsFresh({ unOrdinal: ord, rtTimestamp: m.rtTimestamp, m_rtTimestamp: m.m_rtTimestamp }, seen, Date.now() / 1000)) break;
           var payload = m.strMessageInternal.slice(SIG.length);
-          if (payload === "stop") { window.__ds_view_url = null; window.__ds_view_ice = null; window.__ds_view_ws = null; window.__ds_view_audio = false; }
-          else { var p = parseSignal(payload); window.__ds_view_url = p.url; window.__ds_view_ice = p.ice; window.__ds_view_ws = p.ws; window.__ds_view_audio = p.audio; }
+          if (payload === "stop") {
+            if (!window.__ds_view_from || window.__ds_view_from === f.m_unAccountID) {   // only the sharer can stop their share
+              window.__ds_view_url = null; window.__ds_view_ice = null; window.__ds_view_ws = null; window.__ds_view_audio = false; window.__ds_view_from = null;
+            }
+          }
+          else { var p = parseSignal(payload); window.__ds_view_url = p.url; window.__ds_view_ice = p.ice; window.__ds_view_ws = p.ws; window.__ds_view_audio = p.audio; window.__ds_view_codec = p.codec; window.__ds_view_lan = p.lan; window.__ds_view_acodec = p.acodec; window.__ds_view_from = f.m_unAccountID; }
           break;
         }
       });
@@ -1246,12 +1282,12 @@
         ring = el(doc, "div", "ds-ring");
         var av = el(doc, "div", "ds-ring-av");
         var nm = el(doc, "div", "ds-ring-name");
-        var st = el(doc, "div", "ds-ring-sub");
+        var sub = el(doc, "div", "ds-ring-sub");   // NOT `st`: that name holds the voice-call state above (one function scope)
         var btns = el(doc, "div", "ds-ring-btns");
         var acc = el(doc, "button", "ds-ring-accept"); acc.textContent = "✓ Accept";
         var dec = el(doc, "button", "ds-ring-decline"); dec.textContent = "✕ Decline";
         acc.addEventListener("click", function () {
-          ring.__accepting = true; st.textContent = "Connecting…"; btns.style.display = "none";
+          ring.__accepting = true; sub.textContent = "Connecting…"; btns.style.display = "none";
           var b = native.querySelector(".inviteButtonJoinVoice"); if (b) b.click();   // proxy Steam's accept
         });
         dec.addEventListener("click", function () {
@@ -1274,7 +1310,7 @@
           ring.remove();
         });
         btns.appendChild(acc); btns.appendChild(dec);
-        ring.appendChild(av); ring.appendChild(nm); ring.appendChild(st); ring.appendChild(btns);
+        ring.appendChild(av); ring.appendChild(nm); ring.appendChild(sub); ring.appendChild(btns);
         main.appendChild(ring);
       }
       ring.querySelector(".ds-ring-av").style.backgroundImage = avatar ? ("url(" + avatar + ")") : "";
@@ -1340,6 +1376,7 @@
   function tick() {
     __ds_tickn++;
     if (__ds_tickn % 7 === 0) { try { pollSignals(); } catch (e) {} }   // ~every 1s
+    if (__ds_tickn % 20 === 1) { try { ensureDocked(); } catch (e) {} }   // until the store is up
     friendsDocs().forEach(function (doc) {
       try { injectCSS(doc); } catch (e) {}
       try { oneClickOpen(doc); } catch (e) {}
@@ -1350,14 +1387,23 @@
     });
   }
 
-  function init() {
-    // Track any RPT group id (first callback arg) so "Stop sharing" can CloseGroup()
-    // it — a fallback alongside shareScreenNative's own per-share capture.
+  // The whole layout needs Steam's "Dock chats to the friends list" (FriendsSettings.
+  // bSingleWindowMode). Turn it on ONCE so a fresh install works with no manual step; the flag
+  // means a user who later switches it off again isn't overridden on every boot.
+  function ensureDocked() {
     try {
-      if (!window.__ds_rpt_reg && window.SteamClient && window.SteamClient.RemotePlay && window.SteamClient.RemotePlay.RegisterForGroupCreated) {
-        window.__ds_rpt_reg = window.SteamClient.RemotePlay.RegisterForGroupCreated(function (groupId) { window.__ds_rpt_groupid = groupId; });
-      }
+      if (localStorage.getItem("ds_docked_auto") === "1") return;
+      var s = window.g_FriendsUIApp && g_FriendsUIApp.m_SettingsStore;
+      var cur = s && s.FriendsSettings;
+      if (!cur || typeof s.BUpdateFriendsSettings !== "function") return;   // store not ready yet
+      if (cur.bSingleWindowMode !== true &&
+          !s.BUpdateFriendsSettings(Object.assign({}, cur, { bSingleWindowMode: true }))) return;
+      localStorage.setItem("ds_docked_auto", "1");
+      console.log("[ds] docked chats enabled (one-time)");
     } catch (e) {}
+  }
+
+  function init() {
     // Idempotent intervals: clear any from a prior init() (e.g. a live re-inject) so
     // tick loops never stack — duplicate loops race over share/signal state and break it.
     try { (window.__ds_intervals || []).forEach(clearInterval); } catch (e) {}
@@ -1374,7 +1420,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 62;
+  var VERSION = 70;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
