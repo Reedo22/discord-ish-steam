@@ -27,17 +27,15 @@ that CSS can't do, so all of Steam's real voice/calling keeps working. Runs on
 
 ## Install
 
-Requires [Millennium](https://steambrew.app/) installed and run at least once.
-
 ### Windows — easiest: one-click installer
 
-Download **`discord-ish-steam-setup.exe`** from the
-[latest release](https://github.com/Reedo22/discord-ish-steam/releases/latest),
-double-click it, and click **Yes** on the admin (UAC) prompt. It auto-installs
-everything (git, Python, ffmpeg, desktop-audio support, the plugin + theme, host
-binaries) and sets the screen-share daemon to auto-start at logon — no terminal.
+**[Download discord-ish-steam-setup.exe](https://github.com/Reedo22/discord-ish-steam/releases/latest/download/discord-ish-steam-setup.exe)**
+(always the newest release), double-click it, and click **Yes** on the admin (UAC)
+prompt. It installs everything — Millennium if it's missing, git, Python, ffmpeg, the
+plugin + theme, host binaries — sets the screen-share helper to start at logon, and
+restarts Steam. No terminal. Run it again any time to update.
 
-> The EXE isn't code-signed, so SmartScreen may warn "unknown publisher" — click
+> The EXE isn't code-signed, so Windows may show "Windows protected your PC" — click
 > **More info → Run anyway**.
 
 ### Windows — PowerShell one-liner
@@ -51,6 +49,8 @@ missing. If you downloaded the script, run it past the execution policy with
 `powershell -ExecutionPolicy Bypass -File .\install.ps1`.
 
 ### Linux
+
+Requires [Millennium](https://steambrew.app/) installed and run at least once.
 
 ```bash
 git clone https://github.com/Reedo22/discord-ish-steam ~/discord-ish-steam
@@ -153,7 +153,7 @@ capture also needs `gstreamer1.0-tools` + plugins; Wayland additionally needs
   noise cancellation), and drives the share daemon over `127.0.0.1:48592`.
 - `rp-webrtc.py` — the cross-platform screen-share daemon (control API + capture).
   Run `python rp-webrtc.py --selftest` to diagnose capture/encode/audio.
-- `bin/installer.nsi` + `bin/build-installer.sh` — build the one-click Windows EXE.
+- `bin/installer.nsi` + `bin/build-installer.sh` — build the one-click Windows EXE\n  (`/S` silent, `/offline` = use the bundled install.ps1). CI builds and runs it on every\n  push; pushing a `v*` tag publishes it as a release.
 - `bin/rp-mediamtx.yml` — MediaMTX config (RTSP ingest + WebRTC/WHEP).
 - The control API (`127.0.0.1:48592`) only answers Steam's own pages
   (`https://steamloopback.host`, `*.steampowered.com`, `*.steamcommunity.com`) and

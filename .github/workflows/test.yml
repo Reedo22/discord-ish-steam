@@ -58,7 +58,7 @@ jobs:
         shell: pwsh
         run: |
           choco install nsis -y --no-progress
-          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" -V2 -DVERSION=0.0.0 bin\installer.nsi
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" -V2 '-DVERSION=0.0.0' bin\installer.nsi
           if (-not (Test-Path dist\discord-ish-steam-setup.exe)) { throw "EXE not built" }
       - name: run setup EXE (silent, bundled install.ps1)
         shell: pwsh
