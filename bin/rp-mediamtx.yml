@@ -1,7 +1,6 @@
 # Minimal MediaMTX config for the discord-ish screen share.
-# Only RTSP (ffmpeg ingest) + WebRTC (browser/plugin playback) — everything else off
-# to avoid port clashes. STUN is set for cross-network ICE (add a TURN server here if
-# your or your friend's NAT is symmetric/CGNAT and direct P2P fails).
+# Only RTMP (ffmpeg ingest, loopback) + WebRTC (playback) — everything else off to avoid
+# port clashes and needless exposure.
 logLevel: info
 readTimeout: 30s
 writeTimeout: 30s
@@ -10,19 +9,28 @@ api: no
 metrics: no
 pprof: no
 playback: no
-rtmp: no
 hls: no
 srt: no
+moq: no          # v1.19+ enables a MoQ/QUIC server on :8892 (all interfaces) by default
+rtsp: no         # ingest moved to RTMP: ffmpeg < 7.1 can't send AV1 over RTP/RTSP
 
-rtsp: yes
-rtspTransports: [tcp]
-rtspAddress: :8554
+# ingest: the daemon's ffmpeg publishes enhanced-FLV (H.264 or AV1) here. Loopback only.
+rtmp: yes
+rtmpAddress: 127.0.0.1:19350
 
 webrtc: yes
-webrtcAddress: :8889
+# WHEP signaling stays on loopback: viewers reach it only through the daemon's media port
+# (48890), which checks the per-share access key. Media (UDP) is on all interfaces and is
+# forwarded on the router by the daemon (UPnP) so off-LAN viewers connect DIRECTLY.
+webrtcAddress: 127.0.0.1:8889
 webrtcLocalUDPAddress: :8189
-# (To force the public path / "disable local ip", the daemon sets env at launch:
-#  MTX_WEBRTCIPSFROMINTERFACES=no + MTX_WEBRTCADDITIONALHOSTS=<public-ip>.)
+# MediaMTX holds every WHEP answer until STUN gathering finishes — 5 s by default, which was
+# the whole viewer budget (measured: 5.0 s per answer -> viewers fell back to the WebSocket
+# path, which can't work on a LAN without NAT hairpin). The public IP comes from
+# MTX_WEBRTCADDITIONALHOSTS, so STUN isn't needed for it; 1 s still leaves room for TURN.
+webrtcSTUNGatherTimeout: 1s
+# (The daemon adds MTX_WEBRTCADDITIONALHOSTS=<public-ip> at launch, and replaces this
+#  block with STUN/TURN servers from turn_ice().)
 webrtcICEServers2:
   - url: stun:stun.l.google.com:19302
 

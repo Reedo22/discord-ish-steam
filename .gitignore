@@ -14,3 +14,4 @@ bin/auto.key
 auto.crt
 auto.key
 dist/
+bin/ffmpeg
