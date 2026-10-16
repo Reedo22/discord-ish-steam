@@ -1,6 +1,6 @@
 # discord-ish-steam — Windows installer.
 # Run in PowerShell:  irm https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/install.ps1 | iex
-# (or clone the repo and run .\install.ps1). Requires git + Millennium already installed.
+# (or clone the repo and run .\install.ps1). Installs git/Python/ffmpeg/Millennium if missing.
 #
 # Installs the Millennium plugin + theme, then sets up the screen-share daemon
 # (rp-webrtc.py): a localhost service that captures a monitor/window (ffmpeg gdigrab +
@@ -315,10 +315,8 @@ try {
 } catch { Write-Warning "Couldn't add firewall rules ($($_.Exception.Message)) - Windows may ask to allow access on the first share." }
 
 # 8) register a logon task so the daemon is always up (mirrors the Linux systemd service).
-# This is now BELT-AND-BRACES: the plugin's Lua backend (plugin/backend/main.lua) also starts
-# the daemon on every Steam launch, so if this fails the user is no longer stuck running
-# rp-webrtc.py by hand. Deliberately NOT gated on $pyExe any more - fall back to whatever
-# interpreter we can name, since the py launcher resolves a real one at task-run time.
+# Deliberately NOT gated on $pyExe - fall back to whatever interpreter we can name, since the
+# py launcher resolves a real one at task-run time.
 $pyw = $null
 $pywPre = ""
 if ($pyExe) {
@@ -356,13 +354,41 @@ if ($pyw) {
             $sc.TargetPath = $pyw; $sc.Arguments = "$pywPre`"$daemon`""; $sc.WindowStyle = 7; $sc.Save()
             Write-Host "Created Startup shortcut $lnk"
         } catch {
-            Write-Warning "Startup shortcut also failed ($($_.Exception.Message)) - not fatal: the plugin's Lua backend starts the daemon each time Steam launches."
+            Write-Warning "Startup shortcut also failed ($($_.Exception.Message)) - start it by hand: pythonw rp-webrtc.py"
         }
     }
-    Start-Process $pyw -ArgumentList "$pywPre`"$daemon`"" -WindowStyle Hidden
+    # Replace a daemon that's already running: otherwise the new one finds the control port
+    # taken, exits ("already running"), and the OLD code keeps serving until the next logon -
+    # re-running this installer to update would silently change nothing (found in the VM).
+    $old = Get-CimInstance Win32_Process -Filter "Name LIKE 'python%'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like '*rp-webrtc.py*' }
+    foreach ($o in @($old)) {
+        if (-not $o) { continue }
+        Get-CimInstance Win32_Process -Filter "ParentProcessId = $($o.ProcessId)" -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }   # ffmpeg, mediamtx, cloudflared
+        Stop-Process -Id $o.ProcessId -Force -ErrorAction SilentlyContinue
+        Write-Host "Stopped the old screen-share daemon (pid $($o.ProcessId))."
+    }
+    if ($old) { Start-Sleep -Seconds 1 }
+    # Start it through the logon task when there is one, so it runs as the signed-in user,
+    # un-elevated, exactly as it will after a reboot (this script itself is usually elevated).
+    $started = $false
+    if (Get-ScheduledTask -TaskName "discordish-rp-webrtc" -ErrorAction SilentlyContinue) {
+        try { Start-ScheduledTask -TaskName "discordish-rp-webrtc"; $started = $true } catch {}
+    }
+    # The task only runs inside an interactive logon; with none (CI, remote shells) it stays
+    # queued, so confirm the daemon answers and start it directly if it doesn't.
+    if ($started) {
+        $started = $false
+        foreach ($i in 1..10) {
+            Start-Sleep -Milliseconds 500
+            try { if ((Invoke-RestMethod -TimeoutSec 2 http://127.0.0.1:48592/ping).ok) { $started = $true; break } } catch {}
+        }
+    }
+    if (-not $started) { Start-Process $pyw -ArgumentList "$pywPre`"$daemon`"" -WindowStyle Hidden }
     Write-Host "Started the screen-share daemon."
 } else {
-    Write-Warning "No Python interpreter found, so no logon task was registered. Install Python 3 and re-run; the plugin's Lua backend will then start the daemon on each Steam launch."
+    Write-Warning "No Python interpreter found, so no logon task was registered. Install Python 3 and re-run this installer."
 }
 
 # Dependency summary — re-running the installer is the "updater"; this shows what's present.
@@ -376,7 +402,7 @@ Write-Host ""
 Write-Host "Dependency check:"
 Test-Dep "Python"           ([bool]$pyExe)
 Test-Dep "ffmpeg"           ([bool](Get-Command ffmpeg -ErrorAction SilentlyContinue))
-Test-Dep "pyaudiowpatch (audio)" $pyaudioOk
+Test-Dep "pyaudiowpatch (audio fallback for Windows 10 before 2004)" $pyaudioOk
 Test-Dep "mediamtx.exe"     (Test-Path (Join-Path $repo "bin\mediamtx.exe"))
 Test-Dep "cloudflared.exe (off-LAN)" (Test-Path (Join-Path $repo "bin\cloudflared.exe"))
 
@@ -389,5 +415,5 @@ if (-not $env:DS_NO_STEAM_RESTART -and (Get-Process steam -ErrorAction SilentlyC
 }
 
 Write-Host ""
-Write-Host "DONE. In Steam: Friends settings -> enable 'Dock chats to the friends list'."
+Write-Host "DONE. Chats dock into the friends list automatically on the next Steam start."
 Write-Host "Re-run this installer any time to update + auto-install anything missing."

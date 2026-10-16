@@ -1,0 +1,30 @@
+# Tag a version (git tag v0.7.0 && git push --tags) -> builds the Windows setup EXE and
+# publishes it as a GitHub release. The newest release's EXE is always at
+#   https://github.com/Reedo22/discord-ish-steam/releases/latest/download/discord-ish-steam-setup.exe
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  exe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: build
+        run: VERSION="${GITHUB_REF_NAME#v}" bin/build-installer.sh
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="Download **discord-ish-steam-setup.exe** below and double-click it. Click **Yes** on the admin prompt.
+          It installs everything (Millennium, the plugin, Python, ffmpeg) and restarts Steam.
+          Windows may say \"Windows protected your PC\" because the EXE isn't code-signed. Click **More info**, then **Run anyway**.
+          Run it again any time to update."
+          gh release create "$GITHUB_REF_NAME" dist/discord-ish-steam-setup.exe \
+            --title "$GITHUB_REF_NAME" --notes "$notes" --verify-tag \
+          || gh release upload "$GITHUB_REF_NAME" dist/discord-ish-steam-setup.exe --clobber

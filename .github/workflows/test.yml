@@ -11,8 +11,8 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with: { node-version: 22 }
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg libluajit-5.1-2
       - run: tests/run.sh -v
@@ -20,10 +20,10 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.12" }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: 22 }
       - name: ffmpeg
         run: choco install ffmpeg -y --no-progress
@@ -39,12 +39,13 @@ jobs:
           if ($out -notmatch 'capture\+encode: PASS') { throw "Windows capture+encode failed" }
 
   windows-installer:
-    # The real one-liner installer, end to end, against a fake Steam + Millennium layout:
-    # Python detection, pyaudiowpatch, host-binary fetch, plugin copy, config.json enable,
-    # logon task, and the daemon actually answering on its control port afterwards.
+    # The real setup EXE (what friends download), end to end, against a fake Steam +
+    # Millennium layout: Python detection, pyaudiowpatch, host-binary fetch, plugin copy,
+    # config.json enable, logon task, and the daemon actually answering afterwards.
+    # Run twice: the second run is an UPDATE and must replace the running daemon.
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: fake Steam + Millennium
         shell: pwsh
         run: |
@@ -53,11 +54,19 @@ jobs:
           '{"plugins":{"enabledPlugins":[]}}' | Set-Content "$steam\millennium\config\config.json"
           New-Item -Force 'HKCU:\Software\Valve\Steam' | Out-Null
           Set-ItemProperty 'HKCU:\Software\Valve\Steam' SteamPath 'c:/fakesteam'
-      - name: run install.ps1
+      - name: build setup EXE
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" -V2 -DVERSION=0.0.0 bin\installer.nsi
+          if (-not (Test-Path dist\discord-ish-steam-setup.exe)) { throw "EXE not built" }
+      - name: run setup EXE (silent, bundled install.ps1)
         shell: pwsh
         env:
           DS_REPO_REF: ${{ github.sha }}
-        run: ./install.ps1
+        run: |
+          $p = Start-Process dist\discord-ish-steam-setup.exe -ArgumentList '/S','/offline' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "setup EXE exited $($p.ExitCode)" }
       - name: verify install
         shell: pwsh
         run: |
@@ -73,3 +82,24 @@ jobs:
           }
           if (-not $ok) { throw "daemon never answered /ping" }
           Write-Host "daemon up:" ($j | ConvertTo-Json -Compress)
+
+      - name: re-run setup EXE (update) replaces the running daemon
+        shell: pwsh
+        env:
+          DS_REPO_REF: ${{ github.sha }}
+        run: |
+          $before = (Get-CimInstance Win32_Process | ? { $_.CommandLine -like '*rp-webrtc.py*' -and $_.Name -like 'python*' }).ProcessId
+          $p = Start-Process dist\discord-ish-steam-setup.exe -ArgumentList '/S','/offline' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "setup EXE exited $($p.ExitCode)" }
+          $ok = $false
+          foreach ($i in 1..30) {
+            $after = (Get-CimInstance Win32_Process | ? { $_.CommandLine -like '*rp-webrtc.py*' -and $_.Name -like 'python*' }).ProcessId
+            try { $j = Invoke-RestMethod http://127.0.0.1:48592/ping; if ($j.ok -and $after -and -not ($after | ? { $before -contains $_ })) { $ok = $true; break } } catch {}
+            Start-Sleep 1
+          }
+          if (-not $ok) { throw "daemon was not replaced (before: $before, after: $after)" }
+          Write-Host "daemon replaced: $before -> $after"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: discord-ish-steam-setup
+          path: dist/discord-ish-steam-setup.exe
