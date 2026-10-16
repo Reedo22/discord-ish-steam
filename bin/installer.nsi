@@ -16,6 +16,7 @@ Unicode true
   !define VERSION "0.0.0"
 !endif
 Name "discord-ish-steam"
+!system 'mkdir "..\dist"'           ; OutFile won't create its folder (fresh clones have none)
 OutFile "..\dist\discord-ish-steam-setup.exe"
 RequestExecutionLevel admin          ; bake a UAC manifest into the EXE
 SetCompressor /SOLID lzma
