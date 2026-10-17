@@ -33,6 +33,7 @@ VIAddVersionKey "LegalCopyright" "github.com/Reedo22/discord-ish-steam"
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
+!include "x64.nsh"
 !define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
 
 ; We don't install into a dir of our own — install.ps1 owns placement — but the
@@ -49,12 +50,21 @@ InstallDir "$TEMP\discord-ish-steam-setup"
 !insertmacro MUI_LANGUAGE "English"
 
 Var PS1
+Var POWERSHELL
 
 Section "Install"
   SetOutPath "$INSTDIR"
   ; Bundle the current install.ps1 as an offline-safe fallback.
   File "..\install.ps1"
   StrCpy $PS1 "$INSTDIR\install.ps1"
+
+  ; NSIS is a 32-bit process, so plain "powershell" would be the 32-bit one (SysWOW64), which
+  ; sees redirected Program Files and registry views. Use the native 64-bit one.
+  StrCpy $POWERSHELL "powershell"
+  ${If} ${RunningX64}
+  ${AndIf} ${FileExists} "$WINDIR\sysnative\WindowsPowerShell\v1.0\powershell.exe"
+    StrCpy $POWERSHELL "$WINDIR\sysnative\WindowsPowerShell\v1.0\powershell.exe"
+  ${EndIf}
 
   ${GetParameters} $R0
   ClearErrors
@@ -63,14 +73,14 @@ Section "Install"
     ; Try to overwrite with the very latest install.ps1 from GitHub (TLS 1.2), so an
     ; old copy of this EXE still installs current code. Any failure keeps the bundled one.
     DetailPrint "Fetching latest installer script..."
-    nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/install.ps1 -OutFile \"$PS1.new\"; Move-Item -Force \"$PS1.new\" \"$PS1\" } catch { Write-Host \"(using bundled install.ps1)\" }"'
+    nsExec::ExecToLog '"$POWERSHELL" -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/install.ps1 -OutFile \"$PS1.new\"; Move-Item -Force \"$PS1.new\" \"$PS1\" } catch { Write-Host \"(using bundled install.ps1)\" }"'
     Pop $0
   ${Else}
     DetailPrint "Using the bundled installer script (/offline)."
   ${EndIf}
 
   DetailPrint "Running installer (Millennium, Python, ffmpeg, the plugin)..."
-  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PS1"'
+  nsExec::ExecToLog '"$POWERSHELL" -NoProfile -ExecutionPolicy Bypass -File "$PS1"'
   Pop $0
   DetailPrint "install.ps1 exit code: $0"
   SetErrorLevel $0

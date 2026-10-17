@@ -6,6 +6,13 @@
 # (rp-webrtc.py): a localhost service that captures a monitor/window (ffmpeg gdigrab +
 # NVENC/QSV), publishes via MediaMTX, and serves WebRTC/WHEP to the viewer's plugin.
 $ErrorActionPreference = "Stop"
+# Started from a PowerShell 7 window (or by anything that inherited its environment), Windows
+# PowerShell 5.1 gets PS7's PSModulePath and can't load its OWN built-ins - Get-FileHash,
+# Expand-Archive... "is not recognized" (seen in CI). Drop PS7's module dirs for this run.
+if ($PSVersionTable.PSEdition -ne 'Core' -and $env:PSModulePath) {
+    $keep = @(($env:PSModulePath -split ';') | Where-Object { $_ -and $_ -notmatch '\\PowerShell\\' })
+    $env:PSModulePath = (@(Join-Path $PSHOME 'Modules') + $keep | Select-Object -Unique) -join ';'
+}
 # Old PowerShell/.NET defaults to TLS 1.0 -> GitHub refuses -> clones/downloads fail.
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
@@ -306,7 +313,9 @@ function Stop-ShareDaemon {
 function Get-VerifiedDownload($url, $sha, $name) {
     $f = Join-Path $env:TEMP $name
     Invoke-WebRequest -UseBasicParsing $url -OutFile $f
-    $got = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+    $fs = [IO.File]::OpenRead($f)
+    try { $got = -join ([Security.Cryptography.SHA256]::Create().ComputeHash($fs) | ForEach-Object { $_.ToString("x2") }) }
+    finally { $fs.Dispose() }
     if ($got -ne $sha) { Remove-Item $f -Force; throw "$name checksum mismatch (got $got)" }
     return $f
 }

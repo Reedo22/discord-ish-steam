@@ -11,22 +11,26 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 $bin = $PSScriptRoot
 Write-Host "Fetching Windows host binaries into $bin"
 
-# --- MediaMTX (resolve latest windows_amd64 zip from the GitHub API) ---
+# --- MediaMTX (pinned version + sha256; no GitHub API, which rate-limits shared IPs) ---
+$MtxVer = "v1.19.1"
+$MtxSha = "ca3d89c370bf73dc33ef9ee87afea04834f21b129f499d4b645490fcb01cce22"
 $mtxExe = Join-Path $bin "mediamtx.exe"
 if (Test-Path $mtxExe) {
     Write-Host "  mediamtx.exe already present - skipping"
 } else {
     try {
-        $rel = Invoke-RestMethod "https://api.github.com/repos/bluenviron/mediamtx/releases/latest" -Headers @{ "User-Agent" = "discord-ish-steam" }
-        $asset = $rel.assets | Where-Object { $_.name -match "windows_amd64\.zip$" } | Select-Object -First 1
-        if (-not $asset) { throw "no windows_amd64 asset in the latest MediaMTX release" }
-        $zip = Join-Path $env:TEMP $asset.name
-        Write-Host "  downloading $($asset.name)"
-        Invoke-WebRequest $asset.browser_download_url -OutFile $zip
+        $name = "mediamtx_${MtxVer}_windows_amd64.zip"
+        $zip = Join-Path $env:TEMP $name
+        Write-Host "  downloading $name"
+        Invoke-WebRequest -UseBasicParsing "https://github.com/bluenviron/mediamtx/releases/download/$MtxVer/$name" -OutFile $zip
+        $fs = [IO.File]::OpenRead($zip)
+        try { $got = -join ([Security.Cryptography.SHA256]::Create().ComputeHash($fs) | ForEach-Object { $_.ToString("x2") }) }
+        finally { $fs.Dispose() }
+        if ($got -ne $MtxSha) { Remove-Item $zip -Force; throw "checksum mismatch (got $got)" }
         Expand-Archive $zip -DestinationPath $bin -Force
         Remove-Item $zip -Force
         if (-not (Test-Path $mtxExe)) { throw "extracted but mediamtx.exe not found" }
-        Write-Host "  installed mediamtx.exe"
+        Write-Host "  installed mediamtx.exe $MtxVer"
     } catch {
         Write-Warning "  mediamtx.exe fetch failed ($($_.Exception.Message)) - self-preview + LAN sharing won't work until this succeeds."
     }
