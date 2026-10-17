@@ -203,7 +203,7 @@ test("theme tokens: presets, accent and corners become :root overrides", () => {
   assert.match(css, /--dc-accent: #ff0000;/);          // explicit accent beats the preset's
   assert.match(css, /--dc-bg: #1e1e2e;/);
   assert.match(css, /--dc-radius-lg: 18px;/);
-  assert.match(css, /\.x\{\}$/);
+  assert.match(css, /\.x\{\}\nhtml body \.ds-theme-btn \{ display: inline-flex !important/);   // way back stays visible
   assert.equal(win.__ds_test.themeCss({ preset: "discord", accent: "", radius: "default", css: "" }), "");
 });
 
@@ -221,4 +221,31 @@ test("theme codes round-trip and junk is rejected", () => {
     { preset: "nope", accent: "red;}body{display:none", radius: "huge", css: 5 })).toString("base64"));
   assert.deepEqual({ ...bad }, { preset: "discord", accent: "", radius: "default", css: "" });
   assert.equal(store.has("ds_theme"), false);            // importing alone doesn't save
+});
+
+// WCAG 2.2 AA: 4.5:1 for text, 3:1 for status colours and filled buttons' labels (bold/icons).
+test("every theme preset keeps readable contrast", () => {
+  const { win } = boot();
+  const css = readFileSync(new URL("../theme/friends.custom.css", import.meta.url), "utf8");
+  const block = css.match(/:root\s*\{[^}]*--dc-sidebar[^}]*\}/)[0];
+  const base = Object.fromEntries([...block.matchAll(/--dc-([\w-]+):\s*(#[0-9a-fA-F]{6})/g)].map((m) => [m[1], m[2]]));
+  const lum = (h) => {
+    const c = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255)
+      .map((x) => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  };
+  const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+  const pairs = [["text", "bg", 4.5], ["text", "sidebar", 4.5], ["text", "raise", 4.5], ["muted", "bg", 4.5],
+    ["muted", "sidebar", 4.5], ["muted", "popover", 4.5], ["muted", "darkest", 4.5], ["bright", "panel", 4.5],
+    ["on-accent", "accent", 4.5], ["on-accent", "danger", 3], ["on-accent", "online", 3],
+    ["online", "sidebar", 3], ["offline", "sidebar", 3]];
+  const bad = [];
+  for (const [name, p] of Object.entries(win.__ds_test.PRESETS)) {
+    const t = { ...base, ...p.t };
+    for (const [fg, bg, min] of pairs) {
+      const r = ratio(t[fg], t[bg]);
+      if (r < min) bad.push(`${name}: ${fg} on ${bg} = ${r.toFixed(2)} (< ${min})`);
+    }
+  }
+  assert.deepEqual(bad, []);
 });

@@ -29,6 +29,10 @@ IS_WIN = os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
 
 
+# Appended to share errors so the user knows the next step (heuristic: say how to recover).
+LOG_HINT = ("Try another source; details are in %TEMP%\\rp-webrtc.log" if os.name == "nt" else
+            "Try another source; details: journalctl --user -u discordish-rp-webrtc")
+
 def _console_fallback():
     """Under pythonw.exe (how the Windows logon task and the plugin's Lua backend start us,
     so no console window flashes up) sys.stdout/sys.stderr are None, and the first
@@ -2444,7 +2448,7 @@ class H(BaseHTTPRequestHandler):
                     state["start_sig"], state["start_t"] = sig, time.monotonic()
             except Exception as e:
                 sys.stderr.write("[ctl] start failed: %r\n" % e)
-                state["err"] = "capture failed to start (%s)" % e
+                state["err"] = "Couldn't start capturing (%s). %s" % (e, LOG_HINT)
                 ok = False
             # local=1 -> skip the tunnel (LAN-only, faster). An own https origin
             # (public_url) replaces the tunnel entirely.
@@ -2462,7 +2466,7 @@ class H(BaseHTTPRequestHandler):
                         "h": MAX_H or "auto", "br": BITRATE, "fps": FPS,
                         "audio": bool(state.get("audio")),
                         "acodec": state.get("acodec"),
-                        "error": None if ok else (state.get("err") or "capture failed to start")})
+                        "error": None if ok else (state.get("err") or "Couldn't start capturing. " + LOG_HINT)})
         elif u.path == "/stop":
             # stop the capture but KEEP the tunnel warm for the next share (instant restart)
             _portal["cancel"].set()          # abandon a share still waiting on the picker

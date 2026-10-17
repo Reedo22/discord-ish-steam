@@ -389,19 +389,6 @@ $cfOk  = Test-Path (Join-Path $repo "bin\cloudflared.exe")
 if (-not $mtxOk) { Write-Warning "mediamtx.exe missing - self-preview + LAN sharing won't work. Re-run: .\bin\fetch-windows.ps1" }
 if (-not $cfOk)  { Write-Host "  (cloudflared.exe absent - off-LAN sharing disabled; LAN sharing still works.)" }
 
-# 7b) firewall: allow the share's inbound ports up front. Otherwise the first share pops a
-# Windows Defender "allow access?" dialog for python/mediamtx, and Cancel (or a network set
-# to Public, the Windows 11 default) silently blocks LAN viewers and direct WebRTC.
-# UDP 8189 = WebRTC media (MediaMTX); TCP 48890 = the daemon's key-checked media port.
-try {
-    Get-NetFirewallRule -DisplayName "discord-ish screen share*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-    New-NetFirewallRule -DisplayName "discord-ish screen share (WebRTC media)" -Direction Inbound -Action Allow `
-        -Protocol UDP -LocalPort 8189 -Program (Join-Path $repo "bin\mediamtx.exe") -Profile Any | Out-Null
-    New-NetFirewallRule -DisplayName "discord-ish screen share (media port)" -Direction Inbound -Action Allow `
-        -Protocol TCP -LocalPort 48890 -Profile Any | Out-Null
-    Write-Host "Added firewall rules for screen share (UDP 8189, TCP 48890)."
-} catch { Write-Warning "Couldn't add firewall rules ($($_.Exception.Message)) - Windows may ask to allow access on the first share." }
-
 # 8) register a logon task so the share helper is always up (mirrors the Linux systemd service).
 $pyw = $null
 $pywPre = ""
@@ -417,6 +404,23 @@ if ($runtimeOk) {
     }
     if ($pyw) { Write-Warning "Using '$pyw' for the logon task (couldn't resolve a real python.exe this session)." }
 }
+# 7b) firewall: allow the share's inbound ports up front. Otherwise the first share pops a
+# Windows Defender "allow access?" dialog for python/mediamtx, and Cancel (or a network set
+# to Public, the Windows 11 default) silently blocks LAN viewers and direct WebRTC.
+# UDP 8189 = WebRTC media (MediaMTX); TCP 48890 = the daemon's key-checked media port.
+# Scope the media-port rule to the helper itself, so no other program can listen behind it.
+# (The "py" launcher hands off to another python.exe, so that rare fallback stays unscoped.)
+$fwProgram = @{}
+if ($pyw -and -not $pywPre) { $fwProgram = @{ Program = $pyw } }
+try {
+    Get-NetFirewallRule -DisplayName "discord-ish screen share*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+    New-NetFirewallRule -DisplayName "discord-ish screen share (WebRTC media)" -Direction Inbound -Action Allow `
+        -Protocol UDP -LocalPort 8189 -Program (Join-Path $repo "bin\mediamtx.exe") -Profile Any | Out-Null
+    New-NetFirewallRule -DisplayName "discord-ish screen share (media port)" -Direction Inbound -Action Allow `
+        -Protocol TCP -LocalPort 48890 @fwProgram -Profile Any | Out-Null
+    Write-Host "Added firewall rules for screen share (UDP 8189, TCP 48890)."
+} catch { Write-Warning "Couldn't add firewall rules ($($_.Exception.Message)) - Windows may ask to allow access on the first share." }
+
 if ($pyw) {
     $daemon  = Join-Path $repo "rp-webrtc.py"
     $action  = New-ScheduledTaskAction -Execute $pyw -Argument "$pywPre`"$daemon`""

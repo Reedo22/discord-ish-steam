@@ -838,3 +838,25 @@ html body .ds-theme-panel { width: 360px !important; max-width: calc(100vw - 24p
 .ds-theme-btns { display: flex !important; gap: 6px !important; margin-top: 6px !important; }
 .ds-theme-btns .ds-stream-stop { flex: 1 1 0 !important; font-size: 12px !important; }
 .ds-theme-status { display: block !important; max-width: none !important; min-height: 16px !important; margin-top: 4px !important; text-align: left !important; }
+
+/* ---------- Keyboard focus ----------
+   Our controls show a ring when reached with Tab (never on mouse click). */
+.ds-btn:focus-visible, .ds-caret:focus-visible, .ds-share:focus-visible, .ds-theme-btn:focus-visible,
+.ds-stream-go:focus-visible, .ds-stream-stop:focus-visible, .ds-src-kind:focus-visible, .ds-src-item:focus-visible,
+.ds-ring-accept:focus-visible, .ds-ring-decline:focus-visible, .discordish-min-btn:focus-visible,
+.ds-unmute:focus-visible, .ds-fsbtn:focus-visible, .ds-share-tile:focus-visible,
+.ds-vs-select:focus-visible, .ds-vs-slider:focus-visible, .ds-vs-toggle:focus-visible,
+.ds-theme-color:focus-visible, .ds-theme-css:focus-visible {
+  outline: 2px solid var(--dc-accent) !important; outline-offset: 2px !important;
+}
+
+/* share tile overlay buttons */
+.ds-unmute, .ds-fsbtn {
+  position: absolute !important; bottom: 8px !important; z-index: 5 !important;
+  border: none !important; border-radius: var(--dc-radius-sm) !important; padding: 4px 9px !important;
+  font-size: 12px !important; cursor: pointer !important;
+}
+.ds-unmute { left: 8px !important; background: var(--dc-accent) !important; color: var(--dc-on-accent) !important; }
+.ds-fsbtn { right: 8px !important; background: var(--dc-overlay) !important; color: var(--dc-on-overlay) !important; }
+.ds-theme-undo { color: var(--dc-accent) !important; font-weight: 600 !important; cursor: pointer !important; text-decoration: none !important; }
+.ds-theme-undo:hover { text-decoration: underline !important; }

@@ -89,6 +89,12 @@ jobs:
           Write-Host "daemon up:" ($j | ConvertTo-Json -Compress)
           $names = (Get-CimInstance Win32_Process | ? { $_.CommandLine -like '*rp-webrtc.py*' }).Name
           if ($names -notcontains 'discordish-share.exe') { throw "helper not running as discordish-share.exe: $names" }
+          # Inbound rules must be tied to our programs, not open to anything on that port.
+          foreach ($r in 'discord-ish screen share (media port)', 'discord-ish screen share (WebRTC media)') {
+            $prog = (Get-NetFirewallRule -DisplayName $r | Get-NetFirewallApplicationFilter).Program
+            if (-not $prog -or $prog -eq 'Any') { throw "firewall rule '$r' isn't scoped to a program" }
+            Write-Host "$r -> $prog"
+          }
           & "$env:LOCALAPPDATA\discord-ish-steam\runtime\python.exe" "$env:USERPROFILE\discord-ish-steam\rp-webrtc.py" --selftest
 
       - name: re-run setup EXE (update) replaces the running daemon

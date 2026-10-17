@@ -649,6 +649,7 @@
         var caret = el(doc, "button", "ds-caret"); caret.textContent = "˅"; caret.title = label + " settings";
         caret.addEventListener("click", function (e) {
           e.stopPropagation();
+          escCloses(doc);
           [].forEach.call(stage.querySelectorAll(".ds-voice-settings"), function (p) { if (p !== pop) p.style.display = "none"; });
           var show = pop.style.display !== "block";
           pop.style.display = show ? "block" : "none";
@@ -829,6 +830,7 @@
       }
     });
     shareB.addEventListener("click", function (e) {
+      escCloses(doc);
       e.stopPropagation();
       [].forEach.call(stage.querySelectorAll(".ds-voice-settings"), function (pp) { if (pp !== spop) pp.style.display = "none"; });
       var show = spop.style.display !== "block";
@@ -980,6 +982,7 @@
     if (window.__ds_view_url && fromOk) {
       if (!shareTile) {
         shareTile = el(doc, "div", "ds-tile ds-share-tile");
+        keyboardButton(shareTile, "Screen share. Enter to enlarge");
         if (!shareTile.style.position) shareTile.style.position = "relative";
         var vid = el(doc, "video"); vid.className = "ds-share-video";
         // sound ON by default — we try to play unmuted; if the autoplay policy blocks
@@ -993,8 +996,8 @@
         });
         // no "Screen" label overlay — keeps the shared video clean (e.g. when recording)
         // one-click unmute, shown only if the browser refused unmuted autoplay
-        var unmute = el(doc, "div", "ds-unmute"); unmute.textContent = "🔊 Enable sound";
-        unmute.style.cssText = "position:absolute;left:8px;bottom:8px;background:#5865f2;color:#fff;padding:4px 9px;border-radius:6px;font-size:12px;cursor:pointer;z-index:5;display:none";
+        var unmute = el(doc, "button", "ds-unmute"); unmute.textContent = "🔊 Enable sound";
+        unmute.style.display = "none";
         unmute.addEventListener("click", function (e) {
           e.stopPropagation(); vid.muted = false; vid.volume = 1;
           if (vid.play) vid.play().catch(function () {});
@@ -1002,9 +1005,9 @@
         });
         // true-fullscreen button: ONLY visible once the tile is already in big mode.
         // Goes edge-to-edge real fullscreen (whole screen), not just the in-app big view.
-        var fsbtn = el(doc, "div", "ds-fsbtn"); fsbtn.textContent = "⛶ Fullscreen";
+        var fsbtn = el(doc, "button", "ds-fsbtn"); fsbtn.textContent = "⛶ Fullscreen";
         fsbtn.title = "Fill the whole screen";
-        fsbtn.style.cssText = "position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.55);color:#fff;padding:4px 9px;border-radius:6px;font-size:12px;cursor:pointer;z-index:5;display:none";
+        fsbtn.style.display = "none";
         fsbtn.addEventListener("click", function (e) {
           e.stopPropagation();
           var fsEl = doc.fullscreenElement || doc.webkitFullscreenElement;
@@ -1124,7 +1127,7 @@
     steam: { label: "Steam blue", t: {
       sidebar: "#171d25", bg: "#1b2838", darkest: "#0e1419", raise: "#2a3f5a", hover: "#22344a",
       panel: "#141b24", popover: "#0f151c", text: "#c7d5e0", bright: "#ffffff", muted: "#8f98a0",
-      accent: "#1a9fff", online: "#57cbde", idle: "#e4b54b", offline: "#6d7882" } },
+      accent: "#1f74c9", online: "#4a8f2f", idle: "#e4b54b", offline: "#6d7882" } },
     mocha: { label: "Catppuccin Mocha", t: {
       sidebar: "#181825", bg: "#1e1e2e", darkest: "#11111b", raise: "#313244", hover: "#2a2b3c",
       panel: "#181825", popover: "#11111b", text: "#cdd6f4", bright: "#f5f7ff", muted: "#a6adc8",
@@ -1164,7 +1167,12 @@
     if (r) { t["radius-sm"] = r[0]; t.radius = r[1]; t["radius-lg"] = r[2]; }
     var vars = Object.keys(t).map(function (k) { return "  --dc-" + k + ": " + t[k] + ";"; }).join("\n");
     // :root:root outranks the sheet's :root wherever Millennium puts quick.css.
-    return (vars ? ":root:root {\n" + vars + "\n}\n" : "") + sanitizeUserCss(th.css);
+    var user = sanitizeUserCss(th.css);
+    // Whatever the custom CSS does, the way back (palette button + panel) stays usable.
+    var guard = user ? "\nhtml body .ds-theme-btn { display: inline-flex !important; visibility: visible !important; opacity: 1 !important; }" +
+      "\nhtml body .ds-theme-panel, html body .ds-theme-panel * { visibility: visible !important; opacity: 1 !important; }" +
+      "\nhtml body .ds-theme-panel { display: block !important; }\n" : "";
+    return (vars ? ":root:root {\n" + vars + "\n}\n" : "") + user + guard;
   }
   function applyTheme(doc) {
     var css = themeCss(window.__ds_theme || (window.__ds_theme = loadTheme()));
@@ -1202,11 +1210,31 @@
     var b = el(doc, "div", "ds-theme-btn no-drag");
     b.title = "Appearance";
     b.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2C6.5 2 2 6.1 2 11.2c0 3.6 2.9 6.3 6.4 6.3h1.4c.8 0 1.4.6 1.4 1.4 0 .4-.1.7-.4 1-.3.3-.4.6-.4 1 0 .8.6 1.1 1.6 1.1 5.5 0 10-4.3 10-9.6C22 6.4 17.5 2 12 2Zm-5.5 10a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm3-4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm3 4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z"/></svg>';
+    keyboardButton(b, "Appearance");
     b.addEventListener("click", function (e) { e.stopPropagation(); toggleAppearance(doc); });
     var add = host.querySelector("a");                    // the add-friend link
     host.insertBefore(b, add && add.parentNode === host ? add : null);
   }
+  // A div that acts as a button: reachable with Tab, named for screen readers, Enter/Space click.
+  function keyboardButton(e, label) {
+    e.tabIndex = 0; e.setAttribute("role", "button"); e.setAttribute("aria-label", label);
+    e.addEventListener("keydown", function (ev) {
+      if (ev.target === e && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); e.click(); }
+    });
+  }
+  // Esc closes whichever of our popovers is open (once per window).
+  function escCloses(doc) {
+    if (doc.__dsEsc) return;
+    doc.__dsEsc = true;
+    doc.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Escape") return;
+      var tp = doc.querySelector(".ds-theme-panel");
+      if (tp) { tp.remove(); var b = doc.querySelector(".ds-theme-btn"); if (b) b.focus(); return; }
+      [].forEach.call(doc.querySelectorAll(".ds-voice-settings"), function (p) { p.style.display = "none"; });
+    }, true);
+  }
   function toggleAppearance(doc) {
+    escCloses(doc);
     var open = doc.querySelector(".ds-theme-panel");
     if (open) { open.remove(); return; }
     var th = Object.assign({}, window.__ds_theme || loadTheme());
@@ -1243,6 +1271,19 @@
     var status = el(doc, "div", "ds-src-hint ds-theme-status");
     var btns = el(doc, "div", "ds-theme-btns");
     function button(label, fn) { var b = el(doc, "button", "ds-stream-stop"); b.textContent = label; b.addEventListener("click", fn); btns.appendChild(b); }
+    function sync() { presetSel.value = th.preset; radiusSel.value = th.radius; accent.value = presetAccent(); css.value = th.css; }
+    // Reset and Paste replace everything, custom CSS included, so offer one step back.
+    function undoable(msg) {
+      var before = Object.assign({}, th);
+      return function (after) {
+        th = after; saveTheme(th); sync();
+        status.textContent = msg + " ";
+        var u = el(doc, "a", "ds-theme-undo"); u.textContent = "Undo"; u.href = "#";
+        keyboardButton(u, "Undo");
+        u.addEventListener("click", function (e) { e.preventDefault(); th = before; saveTheme(th); sync(); status.textContent = "Restored."; });
+        status.appendChild(u);
+      };
+    }
     button("Copy theme code", function () {
       var code = exportTheme(th);
       try { navigator.clipboard.writeText(code); status.textContent = "Copied. Paste it anywhere to share."; }
@@ -1252,23 +1293,21 @@
       var apply = function (text) {
         var got = importTheme(text);
         if (!got) { status.textContent = "That isn't a theme code (it starts with dstheme:)."; return; }
-        th = got; saveTheme(th);
-        presetSel.value = th.preset; radiusSel.value = th.radius; accent.value = presetAccent(); css.value = th.css;
-        status.textContent = "Theme applied.";
+        undoable("Theme applied.")(got);
       };
       try { navigator.clipboard.readText().then(apply, function () { apply(css.value); }); } catch (e) { apply(css.value); }
     });
     button("Reset", function () {
-      th = { preset: "discord", accent: "", radius: "default", css: "" }; saveTheme(th);
-      presetSel.value = "discord"; radiusSel.value = "default"; accent.value = presetAccent(); css.value = "";
-      status.textContent = "Back to the default look.";
+      undoable("Back to the default look.")({ preset: "discord", accent: "", radius: "default", css: "" });
     });
     pop.appendChild(btns); pop.appendChild(status);
     var close = el(doc, "button", "ds-stream-go"); close.textContent = "Done";
     close.addEventListener("click", function () { pop.remove(); });
     pop.appendChild(close);
     pop.addEventListener("click", function (e) { e.stopPropagation(); });
+    pop.setAttribute("role", "dialog"); pop.setAttribute("aria-label", "Appearance");
     (doc.body || doc.documentElement).appendChild(pop);
+    try { presetSel.focus(); } catch (e) {}
   }
 
   // === auto-signaling over Steam chat ======================================
@@ -1347,7 +1386,7 @@
   window.__ds_test = { sigPayload: sigPayload, parseSignal: parseSignal, signalIsFresh: signalIsFresh,
                       safeShareUrl: safeShareUrl, isPrivateHost: isPrivateHost,
                       sanitizeUserCss: sanitizeUserCss, themeCss: themeCss, exportTheme: exportTheme,
-                      importTheme: importTheme, loadTheme: loadTheme };
+                      importTheme: importTheme, loadTheme: loadTheme, PRESETS: PRESETS };
   function friendAcctForDoc(doc) {
     try {
       var name = chatFriendName(doc).toLowerCase();
@@ -1685,7 +1724,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 74;
+  var VERSION = 75;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
