@@ -370,8 +370,6 @@
         .catch(function (e) { retry(e && e.message || e); });
     } catch (e) { console.warn("[ds] wConnectShare", e); }
   }
-  // exposed so the test harness (and later, chat-signaling) can start a viewer:
-  window.__dsConnectShare = function (url) { window.__ds_view_url = url; };
   // Try WebRTC (wins on LAN); the moment ICE fails or ~2.5s pass with no frame, switch to
   // the WS/fMP4 tunnel. Remote viewers (no TURN) thus skip straight to WS, no black wait.
   function wConnectAuto(url, v) {
@@ -689,33 +687,59 @@
     // source picker: a monitor OR a specific app window (per-app share). Monitors capture a
     // screen region (x11grab); windows capture the window's own buffer by XID (gstreamer,
     // occlusion-proof). The selected token "geom:WxH+X+Y" or "win:0x.." goes into __ds_share_geom.
+    // What to share: Screen | Window | Camera tabs (only kinds that exist), then which one.
+    // Window sharing used to be one entry deep inside a dropdown and people never found it.
+    var skinds = el(doc, "div", "ds-src-kinds"); spop.appendChild(skinds);
     var ssrcRow = el(doc, "div", "ds-vs-row");
-    var ssrcLbl = el(doc, "span", "ds-vs-label"); ssrcLbl.textContent = "Source";
+    var ssrcLbl = el(doc, "span", "ds-vs-label"); ssrcLbl.textContent = "Screen";
     var ssrc = el(doc, "select", "ds-vs-select");
+    var shint = el(doc, "span", "ds-src-hint"); shint.style.display = "none";
     ssrc.addEventListener("change", function () { window.__ds_share_geom = ssrc.value; });
-    ssrcRow.appendChild(ssrcLbl); ssrcRow.appendChild(ssrc); spop.appendChild(ssrcRow);
+    ssrcRow.appendChild(ssrcLbl); ssrcRow.appendChild(ssrc); ssrcRow.appendChild(shint); spop.appendChild(ssrcRow);
+    var KINDS = [["geom", "Screen"], ["win", "Window"], ["cam", "Camera"]];
+    var srcItems = { geom: [], win: [], cam: [] };
+    var srcKind = ((window.__ds_share_geom || "geom:").split(":")[0]) || "geom";
+    var renderSources = function () {
+      if (!srcItems[srcKind] || !srcItems[srcKind].length) srcKind = "geom";
+      skinds.textContent = "";
+      KINDS.forEach(function (k) {
+        if (!srcItems[k[0]].length) return;
+        var b = el(doc, "button", "ds-src-kind" + (k[0] === srcKind ? " active" : ""));
+        b.type = "button"; b.textContent = k[1];
+        b.addEventListener("click", function (e) {
+          e.stopPropagation();
+          if (srcKind === k[0]) return;
+          srcKind = k[0]; window.__ds_share_geom = null; renderSources();
+        });
+        skinds.appendChild(b);
+      });
+      var items = srcItems[srcKind] || [];
+      ssrc.textContent = "";
+      items.forEach(function (it) {
+        var o = doc.createElement("option"); o.value = it[0]; o.textContent = it[1]; ssrc.appendChild(o);
+      });
+      if (window.__ds_share_geom && items.some(function (it) { return it[0] === window.__ds_share_geom; }))
+        ssrc.value = window.__ds_share_geom;
+      else if (items.length) ssrc.value = items[0][0];
+      window.__ds_share_geom = ssrc.value || null;
+      ssrcLbl.textContent = { geom: "Screen", win: "Window", cam: "Camera" }[srcKind];
+      // Wayland: apps can't list other apps' windows, so the desktop's picker chooses.
+      var viaPicker = srcKind === "win" && items.length === 1 && items[0][0] === "win:portal";
+      ssrc.style.display = viaPicker ? "none" : "";
+      shint.style.display = viaPicker ? "" : "none";
+      shint.textContent = viaPicker ? "You'll pick it in your desktop's share dialog" : "";
+      try { srefresh(); } catch (e) {}
+    };
     var fillSources = function () {
       fetch(WCTL + "/sources", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
         if (sstatus.dataset.err === "daemon") { sstatus.dataset.err = ""; srefresh(); }
-        ssrc.textContent = "";
         var clip = function (s) { return s.length > 36 ? s.slice(0, 36) + "…" : s; };
-        var group = function (label, items, mk) {
-          if (!items || !items.length) return;
-          var g = doc.createElement("optgroup"); g.label = label;
-          items.forEach(function (it, i) {
-            var o = doc.createElement("option"); var v = mk(it, i);
-            o.value = v[0]; o.textContent = v[1]; g.appendChild(o);
-          });
-          ssrc.appendChild(g);
+        srcItems = {
+          geom: (j.monitors || []).map(function (m, i) { return ["geom:" + m.geom, "Monitor " + (i + 1) + (m.primary ? " ★" : "") + " · " + m.name]; }),
+          win: (j.windows || []).map(function (wn) { return ["win:" + wn.id, clip(wn.title)]; }),
+          cam: (j.cameras || []).map(function (cm) { return ["cam:" + cm.id, clip(cm.name)]; })
         };
-        group("Screens", j.monitors, function (m, i) {
-          return ["geom:" + m.geom, "Monitor " + (i + 1) + (m.primary ? " ★" : "") + " · " + m.name];
-        });
-        group("Windows", j.windows, function (wn) { return ["win:" + wn.id, clip(wn.title)]; });
-        group("Cameras", j.cameras, function (cm) { return ["cam:" + cm.id, clip(cm.name)]; });
-        if (window.__ds_share_geom) ssrc.value = window.__ds_share_geom;
-        if (!ssrc.value && ssrc.options.length) ssrc.value = ssrc.options[0].value;
-        window.__ds_share_geom = ssrc.value || window.__ds_share_geom;
+        renderSources();
       }).catch(function () {
         if (window.__ds_share_mode === "webrtc") return;
         sstatus.textContent = NO_DAEMON; sstatus.dataset.err = "daemon";
@@ -777,7 +801,7 @@
             var route = i.via === "public" || i.direct ? "direct" : (i.via === "tunnel" ? "via relay" : "LAN");
             return "Sharing live — " + (i.codec === "av1" ? "AV1" : "H.264") + " (" + (i.encoder || "?") + "), " + route + ". Preview below.";
           })(window.__ds_share_info)
-        : (window.__ds_share_error || "Streams a monitor to your friend — WebRTC, low latency, in-call.");
+        : (window.__ds_share_error || ("Streams " + ({ win: "a window", cam: "your camera" }[srcKind] || "your screen") + " to your friend, peer-to-peer and encrypted."));
       // self-preview loopback so you can confirm the share works solo
       if (sharing) {
         sprev.style.display = "block";
@@ -945,8 +969,15 @@
     // in it. Click to enlarge. This is real DOM video — no native window docking.
     var shareTile = tiles.querySelector(".ds-share-tile");
     var callAcct = activeOneOnOneAcct();
-    // a 1:1 call only shows a share sent by THAT friend (group calls can't be attributed)
-    if (window.__ds_view_url && (!callAcct || !window.__ds_view_from || callAcct === window.__ds_view_from)) {
+    // Only show a share from someone IN this call: the 1:1 partner, or a participant of the
+    // group voice channel. A signal is just a chat message, so any friend could send one;
+    // auto-connecting to a non-participant's URL would hand them your IP and your screen.
+    var fromOk = false;
+    if (window.__ds_view_from) {
+      if (callAcct) fromOk = callAcct === window.__ds_view_from;
+      else fromOk = src_friends.some(function (f) { return rowAccountId(f) === window.__ds_view_from; });
+    }
+    if (window.__ds_view_url && fromOk) {
       if (!shareTile) {
         shareTile = el(doc, "div", "ds-tile ds-share-tile");
         if (!shareTile.style.position) shareTile.style.position = "relative";
@@ -1100,6 +1131,40 @@
     if (audio && acodec === "opus") p += "|ac=opus";        // absent = AAC, WS path only
     return p;
   }
+  // A signal is a chat message any Steam friend can send, so everything in it is untrusted.
+  // Only accept endpoints shaped like OUR share: https (or wss) anywhere, plain http/ws only to
+  // a private/LAN address (an interceptable plain-text handshake must never cross the
+  // internet), and only the share paths. ICE servers must be STUN/TURN URLs.
+  function isPrivateHost(h) {
+    h = (h || "").replace(/^\[|\]$/g, "").toLowerCase();
+    var m = h.match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
+    if (m) {
+      var a = +m[1], b = +m[2];
+      return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+             (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254);
+    }
+    return h === "::1" || /^f[cd][0-9a-f]{2}:/.test(h) || /^fe80:/.test(h);
+  }
+  function safeShareUrl(u, kind) {   // kind: "whep" | "ws"
+    if (typeof u !== "string" || !u || u.length > 2048) return null;
+    var x; try { x = new URL(u); } catch (e) { return null; }
+    var secure = kind === "ws" ? "wss:" : "https:", plain = kind === "ws" ? "ws:" : "http:";
+    if (x.protocol !== secure && !(x.protocol === plain && isPrivateHost(x.hostname))) return null;
+    if (x.username || x.password) return null;
+    if (!(kind === "ws" ? /\/screen\/ws$/ : /\/screen\/whep$/).test(x.pathname)) return null;
+    return u;
+  }
+  function safeIce(ice) {
+    if (!Array.isArray(ice) || !ice.length || ice.length > 8) return null;
+    var ok = ice.every(function (s) {
+      if (!s || typeof s !== "object") return false;
+      var urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+      if (!urls.length || urls.length > 8) return false;
+      if (!urls.every(function (x) { return typeof x === "string" && x.length < 512 && /^(stun|turn|turns):/.test(x); })) return false;
+      return ["username", "credential"].every(function (k) { return s[k] === undefined || (typeof s[k] === "string" && s[k].length < 512); });
+    });
+    return ok ? ice : null;
+  }
   function parseSignal(payload) {
     var parts = payload.split("|");
     var out = { url: parts[0], ice: null, ws: null, audio: false, codec: "h264", lan: null, acodec: "aac" };
@@ -1112,10 +1177,15 @@
       else if (s.indexOf("ac=") === 0) { out.acodec = s.slice(3) === "opus" ? "opus" : "aac"; }
       else if (s.indexOf("lan=") === 0) { try { out.lan = decodeURIComponent(s.slice(4)); } catch (e) {} }
     }
+    out.url = safeShareUrl(out.url, "whep");
+    out.ws = safeShareUrl(out.ws, "ws");
+    out.lan = safeShareUrl(out.lan, "whep");
+    out.ice = safeIce(out.ice);
     return out;
   }
   // pure helpers, exposed for tests/test_plugin.mjs (no effect in Steam)
-  window.__ds_test = { sigPayload: sigPayload, parseSignal: parseSignal, signalIsFresh: signalIsFresh };
+  window.__ds_test = { sigPayload: sigPayload, parseSignal: parseSignal, signalIsFresh: signalIsFresh,
+                      safeShareUrl: safeShareUrl, isPrivateHost: isPrivateHost };
   function friendAcctForDoc(doc) {
     try {
       var name = chatFriendName(doc).toLowerCase();
@@ -1197,7 +1267,7 @@
               window.__ds_view_url = null; window.__ds_view_ice = null; window.__ds_view_ws = null; window.__ds_view_audio = false; window.__ds_view_from = null;
             }
           }
-          else { var p = parseSignal(payload); window.__ds_view_url = p.url; window.__ds_view_ice = p.ice; window.__ds_view_ws = p.ws; window.__ds_view_audio = p.audio; window.__ds_view_codec = p.codec; window.__ds_view_lan = p.lan; window.__ds_view_acodec = p.acodec; window.__ds_view_from = f.m_unAccountID; }
+          else { var p = parseSignal(payload); if (!p.url) break; window.__ds_view_url = p.url; window.__ds_view_ice = p.ice; window.__ds_view_ws = p.ws; window.__ds_view_audio = p.audio; window.__ds_view_codec = p.codec; window.__ds_view_lan = p.lan; window.__ds_view_acodec = p.acodec; window.__ds_view_from = f.m_unAccountID; }
           break;
         }
       });
@@ -1451,7 +1521,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 72;
+  var VERSION = 73;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {

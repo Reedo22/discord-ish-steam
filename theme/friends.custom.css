@@ -585,6 +585,15 @@ html.discordish-incall .chatHeader .ChatMessageEntryVoice { display: none !impor
 .ds-vs-slider { width: 130px !important; accent-color: var(--dc-accent) !important; }
 .ds-vs-select { width: 150px !important; background: var(--dc-darkest) !important; color: var(--dc-text) !important; border: none !important; border-radius: 4px !important; padding: 3px 4px !important; font-size: 12px !important; }
 .ds-vs-toggle { width: 16px !important; height: 16px !important; accent-color: var(--dc-accent) !important; }
+/* share source: Screen | Window | Camera segmented tabs */
+.ds-src-kinds { display: flex !important; gap: 4px !important; padding: 3px !important; margin: 2px 0 6px !important;
+  background: var(--dc-darkest) !important; border-radius: 8px !important; }
+.ds-src-kind { flex: 1 1 0 !important; border: none !important; border-radius: 6px !important; padding: 6px 0 !important;
+  background: transparent !important; color: var(--dc-muted) !important; font-size: 13px !important; font-weight: 600 !important;
+  cursor: pointer !important; transition: background var(--dc-fast, 120ms) ease, color var(--dc-fast, 120ms) ease !important; }
+.ds-src-kind:hover { color: var(--dc-text) !important; background: var(--dc-hover) !important; }
+.ds-src-kind.active { background: var(--dc-accent) !important; color: #fff !important; }
+.ds-src-hint { color: var(--dc-muted) !important; font-size: 12px !important; text-align: right !important; max-width: 190px !important; }
 
 /* minimize/expand toggle */
 .discordish-min-btn {

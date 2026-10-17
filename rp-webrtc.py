@@ -21,6 +21,7 @@
 import os, sys, json, socket, subprocess, threading, signal, shutil, time, re, tempfile
 import urllib.request, urllib.error, base64, hashlib, struct, collections, secrets, hmac
 import xml.etree.ElementTree as ET
+import ipaddress
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs, urljoin
 
@@ -2275,6 +2276,12 @@ GEOM_RE = re.compile(r"^(\d{1,5})x(\d{1,5})\+(-?\d{1,5})\+(-?\d{1,5})$")
 XID_RE = re.compile(r"^0x[0-9a-fA-F]{1,8}$")
 
 
+def host_is_loopback(host):
+    """The control API's Host header: 127.0.0.1 / localhost / [::1] (any port). It's the NAME
+    that defeats DNS rebinding: a rebound request carries the attacker's hostname."""
+    return bool(re.match(r"^(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$", (host or "").strip().lower()))
+
+
 def origin_allowed(origin, fetch_site=None):
     """Origin header present -> must be a Steam page. Absent -> refuse only what a browser
     marks cross-site (an <img>/<script> GET from another site carries no Origin but does
@@ -2284,16 +2291,54 @@ def origin_allowed(origin, fetch_site=None):
     return (fetch_site or "none") in ("none", "same-origin")
 
 
+def is_private_host(host):
+    """A LAN/loopback/link-local/CGNAT (Tailscale) IP literal. Hostnames don't count."""
+    try:
+        ip = ipaddress.ip_address((host or "").strip("[]"))
+    except ValueError:
+        return False
+    return (ip.is_private or ip.is_loopback or ip.is_link_local
+            or (ip.version == 4 and ip in ipaddress.ip_network("100.64.0.0/10")))
+
+
 def whep_target_ok(target):
     """The viewer's WHEP proxy forwards an SDP offer to the HOST's endpoint, whose URL
-    arrives in a chat message — i.e. from another person. Only forward to something shaped
-    like a WHEP endpoint (http/https, .../screen/whep), not to arbitrary internal URLs."""
+    arrives in a chat message, i.e. from another person. Only forward to something shaped
+    like OUR share endpoint: https anywhere, plain http only to a LAN address (a plain-text
+    handshake must not cross the internet), path .../screen/whep, no credentials."""
     try:
         t = urlparse(target or "")
+        host = t.hostname
     except Exception:
         return False
-    return (t.scheme in ("http", "https") and bool(t.hostname)
-            and t.path.rstrip("/").endswith("/screen/whep"))
+    if not host or t.username or t.password or len(target) > 2048:
+        return False
+    if not (t.scheme == "https" or (t.scheme == "http" and is_private_host(host))):
+        return False
+    return t.path.rstrip("/").endswith("/screen/whep")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """The WHEP proxy must not follow redirects: a vetted URL could otherwise bounce the
+    request to an internal address the check above would have refused."""
+    def redirect_request(self, *a, **k):
+        return None
+
+
+_no_redirect_opener = urllib.request.build_opener(_NoRedirect)
+MAX_SDP = 64 * 1024          # an SDP offer is a few KB; refuse anything absurd
+MAX_WS_VIEWERS = 8
+
+
+def _body(handler):
+    """Request body up to MAX_SDP, or None if missing/oversized/malformed."""
+    try:
+        n = int(handler.headers.get("Content-Length", 0) or 0)
+    except ValueError:
+        return None
+    if n < 0 or n > MAX_SDP:
+        return None
+    return handler.rfile.read(n)
 
 
 def validate_source(geom, win, cam):
@@ -2309,6 +2354,8 @@ def validate_source(geom, win, cam):
 
 
 class H(BaseHTTPRequestHandler):
+    timeout = 20
+
     def log_message(self, *a): pass
 
     def _cors(self):
@@ -2326,6 +2373,13 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(b)
 
     def _guard(self):
+        # Host must be loopback: a web page that DNS-rebinds its own name to 127.0.0.1 makes
+        # same-origin requests (no Origin header) that the origin check alone would let in.
+        if not host_is_loopback(self.headers.get("Host")):
+            sys.stderr.write("[ctl] refused %s %s for Host %r (DNS rebinding?)\n" % (
+                self.command, urlparse(self.path).path, self.headers.get("Host")))
+            self._send({"ok": False, "error": "forbidden host"}, 403)
+            return False
         if origin_allowed(self.headers.get("Origin"), self.headers.get("Sec-Fetch-Site")):
             return True
         sys.stderr.write("[ctl] refused %s %s from origin=%r site=%r\n" % (
@@ -2467,11 +2521,13 @@ class H(BaseHTTPRequestHandler):
         if not whep_target_ok(target):
             self.send_response(400); self._cors(); self.end_headers()
             self.wfile.write(b"bad or missing target"); return
-        body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        body = _body(self)
+        if body is None:
+            self.send_response(413); self._cors(); self.end_headers(); return
         try:
             req = urllib.request.Request(target, data=body, method="POST",
                 headers={"Content-Type": self.headers.get("Content-Type", "application/sdp")})
-            r = urllib.request.urlopen(req, timeout=12)
+            r = _no_redirect_opener.open(req, timeout=12)
             ans, ct, code = r.read(), r.headers.get("Content-Type", "application/sdp"), r.status
         except urllib.error.HTTPError as e:
             ans, ct, code = e.read(), "application/sdp", e.code
@@ -2497,6 +2553,8 @@ def key_ok(path):
 
 
 class MediaH(BaseHTTPRequestHandler):
+    timeout = 20             # idle/slow clients can't pin a thread forever (slowloris)
+
     def log_message(self, *a):
         pass
 
@@ -2504,7 +2562,9 @@ class MediaH(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path != "/screen/whep" or not key_ok(self.path):
             self.send_response(404); self.end_headers(); return
-        body = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
+        body = _body(self)
+        if body is None:
+            self.send_response(413); self.end_headers(); return
         try:
             req = urllib.request.Request("http://127.0.0.1:%d/screen/whep" % WHEP_PORT, data=body,
                                          method=self.command,
@@ -2545,6 +2605,10 @@ class MediaH(BaseHTTPRequestHandler):
             key = self.headers.get("Sec-WebSocket-Key")
             if not key:
                 self.send_response(400); self.end_headers(); return
+            with ws_lock:
+                full = len(ws_clients) >= MAX_WS_VIEWERS
+            if full:             # a leaked link can't turn your upload into a broadcast
+                self.send_response(503); self.end_headers(); return
             self.send_response(101)
             self.send_header("Upgrade", "websocket")
             self.send_header("Connection", "Upgrade")

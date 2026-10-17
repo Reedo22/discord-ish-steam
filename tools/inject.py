@@ -5,6 +5,9 @@ import sys, json, asyncio, urllib.request, pathlib, subprocess, re
 import websockets
 
 def _detect_port():
+    import os
+    if os.environ.get("DS_CDP_PORT"):        # e.g. a VM's Steam tunnelled to a local port
+        return int(os.environ["DS_CDP_PORT"])
     try:
         out = subprocess.check_output(["pgrep", "-af", "steamwebhelper"], text=True)
         m = re.search(r"remote-debugging-port=(\d+)", out)

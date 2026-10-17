@@ -65,8 +65,8 @@ test("signal payload round-trips url, ICE, ws and audio", () => {
 
 test("garbage signal fields don't throw", () => {
   const { win } = boot();
-  const p = win.__ds_test.parseSignal("u|ice=!!notbase64|ws=%E0%A4%A|aud=7|zzz");
-  assert.equal(p.url, "u");
+  const p = win.__ds_test.parseSignal("https://h/screen/whep?k=1|ice=!!notbase64|ws=%E0%A4%A|aud=7|zzz");
+  assert.equal(p.url, "https://h/screen/whep?k=1");
   assert.equal(p.ice, null);
   assert.equal(p.audio, false);
 });
@@ -132,4 +132,51 @@ test("audio codec is signaled so WebRTC viewers request the Opus track", () => {
   assert.equal(parseSignal(sigPayload("u", null, null, true, "av1", null, "opus")).acodec, "opus");
   assert.equal(parseSignal(sigPayload("u", null, null, true, "av1", null, "aac")).acodec, "aac");
   assert.ok(!sigPayload("u", null, null, false, "av1", null, "opus").includes("ac="));  // no audio -> nothing
+});
+
+test("signals from a friend can only point at share endpoints", () => {
+  const { win } = boot();
+  const { parseSignal, sigPayload } = win.__ds_test;
+  const ok = (u) => parseSignal(sigPayload(u, null, null, false)).url;
+  // accepted: https anywhere, plain http only to LAN/private addresses
+  assert.equal(ok("https://share.example.com/screen/whep?k=abc"), "https://share.example.com/screen/whep?k=abc");
+  assert.equal(ok("https://a-b.trycloudflare.com/screen/whep?k=x"), "https://a-b.trycloudflare.com/screen/whep?k=x");
+  for (const lan of ["http://192.168.1.5:48890/screen/whep?k=a", "http://172.17.0.169:48890/screen/whep?k=a",
+                     "http://10.0.0.2:48890/screen/whep?k=a", "http://100.101.1.1:48890/screen/whep?k=a"])
+    assert.equal(ok(lan), lan);
+  // rejected
+  for (const bad of ["http://76.1.2.3:48890/screen/whep?k=a",       // plain http across the internet
+                     "http://172.32.0.1:48890/screen/whep?k=a",     // just outside 172.16/12
+                     "https://evil.example/collect",                 // not a share endpoint
+                     "https://evil.example/screen/whep/x",
+                     "javascript:alert(1)", "file:///etc/passwd", "ftp://x/screen/whep",
+                     "https://user:pw@h/screen/whep", "not a url", ""])
+    assert.equal(ok(bad), null, bad);
+  assert.equal(ok("https://h/screen/whep?" + "x".repeat(3000)), null);  // oversized
+});
+
+test("signal ws/lan/ice fields are validated too", () => {
+  const { win } = boot();
+  const { parseSignal, sigPayload } = win.__ds_test;
+  const u = "https://h.example/screen/whep?k=1";
+  let p = parseSignal(sigPayload(u, [{ urls: "turn:t.example:3478", username: "a", credential: "b" }],
+                                 "wss://h.example/screen/ws?k=1", true, "av1", "http://192.168.1.5:48890/screen/whep?k=1"));
+  assert.equal(p.ws, "wss://h.example/screen/ws?k=1");
+  assert.equal(p.lan, "http://192.168.1.5:48890/screen/whep?k=1");
+  assert.ok(p.ice);
+  p = parseSignal(sigPayload(u, [{ urls: "https://evil" }], "ws://8.8.8.8/screen/ws", true, "av1",
+                             "http://8.8.8.8:48890/screen/whep"));
+  assert.equal(p.ice, null);
+  assert.equal(p.ws, null);
+  assert.equal(p.lan, null);
+  assert.equal(parseSignal(sigPayload(u, [{ urls: ["stun:s:19302"], username: 5 }], null, false)).ice, null);
+});
+
+test("private address detection", () => {
+  const { win } = boot();
+  const priv = win.__ds_test.isPrivateHost;
+  for (const h of ["10.1.2.3", "127.0.0.1", "172.16.0.1", "172.31.255.255", "192.168.0.1", "100.64.0.1", "[::1]", "fd12:3456::1", "fe80::1"])
+    assert.equal(priv(h), true, h);
+  for (const h of ["8.8.8.8", "172.15.0.1", "172.32.0.1", "100.128.0.1", "192.169.0.1", "example.com", "::ffff:8.8.8.8"])
+    assert.equal(priv(h), false, h);
 });

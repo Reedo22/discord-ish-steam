@@ -6,6 +6,7 @@ Pure-logic tests always run. Tests that need ffmpeg skip cleanly without it.
 """
 import importlib.util
 import io
+import http.server
 import json
 import os
 import shutil
@@ -401,11 +402,27 @@ class Guards(unittest.TestCase):
         good = ("https://abc-def.trycloudflare.com/screen/whep",
                 "http://192.168.1.5:48890/screen/whep", "http://127.0.0.1:8889/screen/whep")
         bad = (None, "", "file:///etc/passwd", "http://169.254.169.254/latest/meta-data",
-               "http://router.lan/admin", "gopher://x/screen/whep", "http:///screen/whep")
+               "http://router.lan/admin", "gopher://x/screen/whep", "http:///screen/whep",
+               "http://8.8.8.8:48890/screen/whep",          # plain http across the internet
+               "http://share.example.com/screen/whep",      # plain http to a hostname
+               "https://u:p@x.example/screen/whep")
         for t in good:
             self.assertTrue(d.whep_target_ok(t), t)
         for t in bad:
             self.assertFalse(d.whep_target_ok(t), t)
+
+    def test_control_host_must_be_loopback(self):
+        for h in ("127.0.0.1:48592", "localhost:48592", "[::1]:48592", "127.0.0.1", "LOCALHOST"):
+            self.assertTrue(d.host_is_loopback(h), h)
+        for h in (None, "", "evil.example:48592", "127.0.0.1.evil.example", "127.0.0.1:abc",
+                  "192.168.1.5:48592", "localhost.evil:1"):
+            self.assertFalse(d.host_is_loopback(h), h)
+
+    def test_private_hosts(self):
+        for h in ("10.0.0.1", "172.17.0.169", "192.168.1.1", "127.0.0.1", "100.101.2.3", "::1", "fd00::1"):
+            self.assertTrue(d.is_private_host(h), h)
+        for h in ("8.8.8.8", "172.32.0.1", "example.com", "", None):
+            self.assertFalse(d.is_private_host(h), h)
 
     def test_source_validation(self):
         with mock.patch.object(d, "is_wayland", return_value=False), \
@@ -502,6 +519,67 @@ class ControlApi(unittest.TestCase):
         code, _, _ = self.get("/whep?target=" + urllib.request.quote("http://127.0.0.1:1/admin"),
                               method="POST", data=b"v=0")
         self.assertEqual(code, 400)
+
+    def test_dns_rebinding_refused(self):
+        # A page that rebinds its own name to 127.0.0.1 makes SAME-ORIGIN requests: no
+        # Origin header, Sec-Fetch-Site: same-origin. Only the Host header gives it away.
+        with mock.patch.object(d, "start_capture") as sc:
+            for path in ("/ping", "/start?geom=100x100%2B0%2B0&local=1", "/url"):
+                code, _, body = self.get(path, {"Host": "evil.example:48592",
+                                                "Sec-Fetch-Site": "same-origin"})
+                self.assertEqual(code, 403, path)
+                self.assertNotIn(b"whep", body)
+            sc.assert_not_called()
+
+    def test_duplicate_start_keeps_running_share(self):
+        d.state.pop("start_sig", None)
+        with mock.patch.object(d, "start_capture", return_value=True) as sc, \
+             mock.patch.object(d, "capture_alive", return_value=True), \
+             mock.patch.object(d, "turn_ice", return_value=[]), \
+             mock.patch.object(d, "pick_encoder", return_value=("libx264", [], [])), \
+             mock.patch.object(d, "is_wayland", return_value=False), \
+             mock.patch.object(d, "IS_WIN", False):
+            q = "/start?geom=100x100%2B0%2B0&local=1&fps=30"
+            k1 = json.loads(self.get(q)[2])["whep"]
+            k2 = json.loads(self.get(q)[2])["whep"]              # double-click
+            self.assertEqual(sc.call_count, 1)
+            self.assertEqual(k1, k2)                               # same share, same link
+            self.get("/start?geom=100x100%2B0%2B0&local=1&fps=60")  # a real option change
+            self.assertEqual(sc.call_count, 2)
+        d.state.pop("start_sig", None)
+
+    def test_whep_proxy_body_cap(self):
+        code, _, _ = self.get("/whep?target=" + urllib.request.quote("https://h.example/screen/whep"),
+                              method="POST", data=b"x" * (d.MAX_SDP + 1))
+        self.assertEqual(code, 413)
+
+    def test_whep_proxy_does_not_follow_redirects(self):
+        hits = []
+
+        class Bounce(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                if self.path.startswith("/secret"):
+                    hits.append(self.path)
+                    self.send_response(200); self.end_headers(); self.wfile.write(b"internal")
+                    return
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                self.send_response(307)
+                self.send_header("Location", "http://127.0.0.1:%d/secret" % self.server.server_address[1])
+                self.end_headers()
+
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), Bounce)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            target = "http://127.0.0.1:%d/screen/whep" % srv.server_address[1]
+            code, _, body = self.get("/whep?target=" + urllib.request.quote(target), method="POST",
+                                     data=b"v=0")
+        finally:
+            srv.shutdown(); srv.server_close()
+        self.assertEqual(hits, [])
+        self.assertNotEqual(body, b"internal")
 
     def test_preflight_for_steam(self):
         code, hdr, _ = self.get("/whep", {"Origin": "https://steamloopback.host"}, "OPTIONS")
