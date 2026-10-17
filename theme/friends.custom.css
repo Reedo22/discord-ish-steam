@@ -208,6 +208,21 @@
   overflow-y: auto !important;
 }
 .chatEntry textarea::placeholder { color: var(--dc-muted) !important; }
+/* Narrow windows: the input shrinks instead of pushing the send button off-screen, and the
+   round buttons get smaller so the text box keeps usable room. */
+.chatEntry textarea, .chatEntry [class*="chatEntryControls"] { min-width: 0 !important; }
+.chatEntry [class*="chatEntryControls"] { flex: 1 1 180px !important; }
+.chatEntry button[type=submit] { flex: 0 0 44px !important; }
+@media (max-width: 760px) {
+  .chatEntry { padding: 8px 10px !important; }
+  html body .chatEntry button[title="Emoticon Picker"],
+  html body .chatEntry button[title="Send Special"] {
+    width: 34px !important; height: 34px !important; min-width: 34px !important; min-height: 34px !important;
+    max-width: 34px !important; max-height: 34px !important; flex: 0 0 34px !important; margin: 0 2px !important;
+  }
+  html body .chatEntry button[type=submit] { width: 38px !important; height: 38px !important; flex: 0 0 38px !important; margin-left: 4px !important; }
+  .chatEntry textarea { padding: 9px 10px !important; }
+}
 
 /* send button -> clean rounded blue */
 .chatEntry button[type=submit] {
@@ -466,7 +481,10 @@ html.discordish-incall .chatHeader .ChatMessageEntryVoice { display: none !impor
 }
 .ds-ring-av {
   width: 104px !important; height: 104px !important; border-radius: 16px !important;
-  background: #1e1f22 center/cover no-repeat !important;
+  /* longhands, NOT the `background:` shorthand: with !important the shorthand also sets
+     background-image: none !important, which beat the avatar set inline (blank card). */
+  background-color: #1e1f22 !important; background-position: center !important;
+  background-size: cover !important; background-repeat: no-repeat !important;
   box-shadow: 0 0 0 4px var(--dc-online) !important;
   animation: dsRingPulse 1.5s ease-in-out infinite !important;
 }

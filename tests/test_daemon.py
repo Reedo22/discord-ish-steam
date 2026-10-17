@@ -319,6 +319,12 @@ class SteamExcludedFromShareAudio(unittest.TestCase):
     def test_no_capture_node_yet(self):
         self.assertEqual(d.PipeWireAppMix.plan([])[0], [])
 
+    def test_pw_dump_with_several_documents_parses(self):
+        raw = b'[{"id": 1}]\n[{"id": 2}, {"id": 3}]\n{"id": 4}\n'
+        self.assertEqual([o["id"] for o in d._json_docs(raw)], [1, 2, 3, 4])
+        self.assertEqual(d._json_docs(b""), [])
+        self.assertEqual(d._json_docs(None), [])
+
 
 class MediaMTXCompat(unittest.TestCase):
     def test_retries_without_keys_an_old_mediamtx_rejects(self):

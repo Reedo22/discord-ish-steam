@@ -1209,6 +1209,20 @@
         if (el.dataset.dsHidden) return;
         if ((el.textContent || "").indexOf(SIG) >= 0) { el.style.display = "none"; el.dataset.dsHidden = "1"; }
       });
+      // A date line whose messages are ALL hidden signals would show as an empty day
+      // ("Friday, October 16" twice in a row), so hide it too; re-show it if a real
+      // message lands under it later.
+      doc.querySelectorAll(".msg.timeDivision").forEach(function (div) {
+        var shown = false;
+        if (/\btime_passes\b/.test(div.className || "")) return;   // the thin gap marker, not a date
+        for (var n = div.nextElementSibling; n; n = n.nextElementSibling) {
+          var c = n.className || "";
+          if (/\btimeDivision\b/.test(c)) { if (/\btime_passes\b/.test(c)) continue; break; }   // next day
+          if (!n.dataset.dsHidden) { shown = true; break; }
+        }
+        if (!shown && !div.dataset.dsDivHidden) { div.style.display = "none"; div.dataset.dsDivHidden = "1"; }
+        else if (shown && div.dataset.dsDivHidden) { div.style.display = ""; delete div.dataset.dsDivHidden; }
+      });
     } catch (e) {}
   }
 

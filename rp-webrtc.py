@@ -1048,8 +1048,8 @@ class PipeWireAppMix:
     def _link_loop(self, proc):
         while self.alive and proc.poll() is None:
             try:
-                graph = json.loads(subprocess.run(["pw-dump"], capture_output=True,
-                                                  timeout=5).stdout or b"[]")
+                graph = _json_docs(subprocess.run(["pw-dump"], capture_output=True,
+                                                  timeout=5).stdout)
                 want, links = self.plan(graph)
                 for out_p, in_p in want:
                     if (out_p, in_p) not in links:
@@ -1058,6 +1058,21 @@ class PipeWireAppMix:
             except Exception as e:
                 sys.stderr.write("[audio] pipewire link scan failed: %s\n" % e)
             time.sleep(1)
+
+
+def _json_docs(raw):
+    """pw-dump's output as ONE list of objects. It sometimes prints several JSON documents
+    back to back (seen when the graph changes mid-dump: "Extra data: line 7 column 1"),
+    which json.loads rejects outright, so read them all and flatten."""
+    text = (raw or b"").decode("utf-8", "replace")
+    dec, i, out = json.JSONDecoder(), 0, []
+    while True:
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if i >= len(text):
+            return out
+        doc, i = dec.raw_decode(text, i)
+        out.extend(doc if isinstance(doc, list) else [doc])
 
 
 class WasapiExcludeSteam:
