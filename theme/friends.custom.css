@@ -254,6 +254,16 @@
   background: transparent !important;
   box-shadow: none !important;
 }
+/* Steam gives the voice button's wrapper margin-left 8px + 2px padding + an inset shadow, so
+   it sat ~15px from the attach button (the others are 6px apart) and a hair off-centre. */
+.chatEntry .ChatMessageEntryVoice {
+  margin: 0 3px 0 1px !important; padding: 0 !important; overflow: visible !important; align-self: center !important;
+}
+.chatEntry .ChatMessageEntryVoice:not(.Active) {
+  width: 40px !important; min-width: 40px !important; max-width: 40px !important; max-height: 40px !important;
+}
+/* Steam's fade-to-black under the chat header */
+.chatHeaderGradient { display: none !important; }
 /* center + fill the composer row: full width, input grows, buttons at the edge */
 .chatEntry form {
   align-items: center !important;
