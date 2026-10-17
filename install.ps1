@@ -16,6 +16,9 @@ $repo = Join-Path $env:USERPROFILE "discord-ish-steam"
 # test so the installer installs THAT code rather than whatever master currently is.
 $repoRef = if ($env:DS_REPO_REF) { $env:DS_REPO_REF } else { "origin/master" }
 
+# Keep a log of every run (the setup EXE's window closes; this is what to send when it fails).
+$installLog = Join-Path $env:TEMP "discord-ish-steam-install.log"
+try { Start-Transcript -Path $installLog -Force | Out-Null } catch {}
 Write-Host "== discord-ish-steam Windows installer =="
 
 function Update-SessionPath {

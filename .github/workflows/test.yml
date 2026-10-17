@@ -70,6 +70,7 @@ jobs:
       - name: verify install
         shell: pwsh
         run: |
+          Get-Content "$env:TEMP\discord-ish-steam-install.log" -ErrorAction SilentlyContinue
           $cfg = Get-Content C:\fakesteam\millennium\config\config.json -Raw | ConvertFrom-Json
           if ($cfg.plugins.enabledPlugins -notcontains 'discordish-chat') { throw "plugin not enabled" }
           if (-not (Test-Path C:\fakesteam\millennium\plugins\discordish-chat\backend\main.lua)) { throw "plugin not copied" }
