@@ -31,7 +31,7 @@ that CSS can't do, so all of Steam's real voice/calling keeps working. Runs on
 
 **[Download discord-ish-steam-setup.exe](https://github.com/Reedo22/discord-ish-steam/releases/latest/download/discord-ish-steam-setup.exe)**
 (always the newest release), double-click it, and click **Yes** on the admin (UAC)
-prompt. It installs everything — Millennium if it's missing, git, Python, ffmpeg, the
+prompt. It installs everything — Millennium if it's missing, git, ffmpeg, the
 plugin + theme, host binaries — sets the screen-share helper to start at logon, and
 restarts Steam. No terminal. Run it again any time to update.
 
@@ -137,8 +137,13 @@ capture ──▶ H.264 hw-encode (+AAC audio) ──▶ MediaMTX ──▶ WebR
 - Viewers only decode H.264, so any GPU/OS can watch. Click the tile to enlarge;
   in big mode a **Fullscreen** button fills the whole screen.
 
-Host requirements: **Python 3**, **ffmpeg** on PATH, **MediaMTX** in `bin/`, and
-(Windows desktop audio) **pyaudiowpatch** — all handled by the installer.
+Host requirements: **Python 3**, **ffmpeg** on PATH and **MediaMTX** in `bin/`, all
+handled by the installer. On Windows nothing Python-related is installed system-wide: the
+helper runs on a private copy of python.org's embeddable Python in
+`%LOCALAPPDATA%\discord-ish-steam\runtime` and shows in Task Manager as
+`discordish-share.exe`. Desktop audio uses WASAPI process loopback (built into Windows 10
+2004+ / 11), so no audio packages are needed. The installer logs every run to
+`%TEMP%\discord-ish-steam-install.log`.
 `cloudflared` in `bin/` is optional (off-LAN sharing only). Linux per-window
 capture also needs `gstreamer1.0-tools` + plugins; Wayland additionally needs
 `gstreamer1.0-pipewire` + `python3-dbus` + `python3-gi` (the installer adds them).
