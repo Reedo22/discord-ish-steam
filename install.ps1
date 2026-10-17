@@ -270,25 +270,101 @@ function Get-RealPyExe {
     }
     return $null
 }
-$winget = Get-Command winget -ErrorAction SilentlyContinue
-if (-not (Get-RealPyExe)) {
-    Install-WingetPackage "Python.Python.3.12" "Python"
+# The share helper used to need a system-wide Python + `pip install pyaudiowpatch` (only to
+# find the audio device). Now it runs on a PRIVATE copy of the official embeddable Python:
+# no Python install, no pip, nothing on PATH, and Task Manager shows "discordish-share.exe".
+# Audio needs no packages either (WASAPI process loopback via ctypes); pyaudiowpatch is
+# unpacked alongside only as the fallback for Windows 10 builds before 2004.
+$RuntimePy  = "3.14.8"
+$RuntimeZip = "https://www.python.org/ftp/python/$RuntimePy/python-$RuntimePy-embed-amd64.zip"
+$RuntimeSha = "a93abe456ab01bd96d7a085b3cdb6566b3063f4241360d114142fbdb07f0a310"
+$WheelUrl   = "https://files.pythonhosted.org/packages/87/4e/ce82cdfdcc37eadb7f405f278182d6b8bb8f6a7d177c83537ddfd53aee24/pyaudiowpatch-0.2.12.9-cp314-cp314-win_amd64.whl"
+$WheelSha   = "dc3ae964530ffe70119a1e2f5b76c661b676aa1cf1b9755d8ecafe081ee85f53"
+$runtime    = Join-Path $env:LOCALAPPDATA "discord-ish-steam\runtime"
+$shareExe   = Join-Path $runtime "discordish-share.exe"
+
+# Stop a running share helper (and its ffmpeg/mediamtx/cloudflared). Needed before the runtime
+# is replaced (its files are in use) and so the freshly installed code actually starts:
+# otherwise the new copy finds the control port taken and exits, and the OLD code keeps
+# serving until the next logon (found in the VM).
+function Stop-ShareDaemon {
+    $old = Get-CimInstance Win32_Process -Filter "CommandLine LIKE '%rp-webrtc.py%'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.ProcessId -ne $PID -and $_.Name -notmatch '^(powershell|pwsh|cmd)' }
+    foreach ($o in @($old)) {
+        if (-not $o) { continue }
+        Get-CimInstance Win32_Process -Filter "ParentProcessId = $($o.ProcessId)" -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        Stop-Process -Id $o.ProcessId -Force -ErrorAction SilentlyContinue
+        Write-Host "Stopped the running screen-share helper (pid $($o.ProcessId))."
+    }
+    if ($old) { Start-Sleep -Seconds 1 }
 }
+
+function Get-VerifiedDownload($url, $sha, $name) {
+    $f = Join-Path $env:TEMP $name
+    Invoke-WebRequest -UseBasicParsing $url -OutFile $f
+    $got = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+    if ($got -ne $sha) { Remove-Item $f -Force; throw "$name checksum mismatch (got $got)" }
+    return $f
+}
+
+function Install-ShareRuntime {
+    $stamp = Join-Path $runtime ".version"
+    $want  = "$RuntimePy+pyaudiowpatch-0.2.12.9"
+    if ((Test-Path $shareExe) -and (Test-Path $stamp) -and ((Get-Content $stamp -Raw).Trim() -eq $want)) {
+        Write-Host "Share helper runtime up to date (Python $RuntimePy, private)."
+        return $true
+    }
+    Write-Host "Installing the share helper's private Python runtime ($RuntimePy, ~11 MB)..."
+    $zip = Get-VerifiedDownload $RuntimeZip $RuntimeSha "ds-python-embed.zip"
+    $whl = Get-VerifiedDownload $WheelUrl $WheelSha "ds-pyaudiowpatch.zip"   # a wheel is a zip
+    $tmp = "$runtime.new"
+    if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+    Expand-Archive $zip -DestinationPath $tmp -Force
+    $sig = Get-AuthenticodeSignature (Join-Path $tmp "pythonw.exe")
+    if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Python Software Foundation') {
+        Remove-Item $tmp -Recurse -Force
+        throw "pythonw.exe signature check failed ($($sig.Status))"
+    }
+    $site = Join-Path $tmp "Lib\site-packages"
+    Expand-Archive $whl -DestinationPath $site -Force
+    # The ._pth file IS sys.path for an embeddable Python; add site-packages for the fallback.
+    $pth = Get-ChildItem $tmp -Filter "python*._pth" | Select-Object -First 1
+    Add-Content $pth.FullName "Lib\site-packages"
+    # Same signed binary under a recognisable name (python3XX.dll is found next to it).
+    Copy-Item (Join-Path $tmp "pythonw.exe") (Join-Path $tmp "discordish-share.exe")
+    Set-Content (Join-Path $tmp ".version") $want
+    Stop-ShareDaemon
+    if (Test-Path $runtime) { Remove-Item $runtime -Recurse -Force }
+    Move-Item $tmp $runtime
+    Remove-Item $zip, $whl -Force -ErrorAction SilentlyContinue
+    Write-Host "  installed to $runtime"
+    return $true
+}
+
+$runtimeOk = $false
+try { $runtimeOk = Install-ShareRuntime }
+catch { Write-Warning "Private runtime install failed ($($_.Exception.Message)) - falling back to a system Python." }
+
+$winget = Get-Command winget -ErrorAction SilentlyContinue
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     Install-WingetPackage "Gyan.FFmpeg" "ffmpeg"
 }
-$pyExe = Get-RealPyExe
-if (-not $pyExe) { Write-Warning "Real Python still not found (Store stub?) - reopen the terminal, or disable the python App Execution Aliases (Settings > Apps > Advanced app settings), then re-run." }
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { Write-Warning "ffmpeg still not on PATH - reopen the terminal / reboot so the daemon can find it." }
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { Write-Warning "ffmpeg still not on PATH - reopen the terminal / reboot so the share helper can find it." }
 
-# 6b) desktop-audio capture needs pyaudiowpatch (WASAPI loopback, no driver). pip is
-# idempotent, so this runs every install/update and self-heals a missing/old package.
-if ($pyExe) {
-    Write-Host "Ensuring pyaudiowpatch (desktop-audio capture)..."
-    try {
-        $rc = Invoke-Native $pyExe -m pip install --upgrade --disable-pip-version-check pyaudiowpatch
-        if ($rc -ne 0) { throw "pip exit $rc" }
-    } catch { Write-Warning "pyaudiowpatch install failed ($($_.Exception.Message)) - screen share works but WITHOUT audio until 'python -m pip install pyaudiowpatch' succeeds." }
+$pyExe = $null
+if (-not $runtimeOk) {
+    # Fallback only (no internet to python.org, or a locked-down PC): system Python + pip.
+    if (-not (Get-RealPyExe)) { Install-WingetPackage "Python.Python.3.12" "Python" }
+    $pyExe = Get-RealPyExe
+    if (-not $pyExe) { Write-Warning "Real Python still not found (Store stub?) - reopen the terminal, or disable the python App Execution Aliases (Settings > Apps > Advanced app settings), then re-run." }
+    if ($pyExe) {
+        Write-Host "Ensuring pyaudiowpatch (desktop-audio fallback)..."
+        try {
+            $rc = Invoke-Native $pyExe -m pip install --upgrade --disable-pip-version-check pyaudiowpatch
+            if ($rc -ne 0) { throw "pip exit $rc" }
+        } catch { Write-Warning "pyaudiowpatch install failed ($($_.Exception.Message)) - only matters on Windows 10 before 2004." }
+    }
 }
 
 # 7) fetch the Windows host binaries (MediaMTX + cloudflared) into bin\ - runs every time;
@@ -314,12 +390,12 @@ try {
     Write-Host "Added firewall rules for screen share (UDP 8189, TCP 48890)."
 } catch { Write-Warning "Couldn't add firewall rules ($($_.Exception.Message)) - Windows may ask to allow access on the first share." }
 
-# 8) register a logon task so the daemon is always up (mirrors the Linux systemd service).
-# Deliberately NOT gated on $pyExe - fall back to whatever interpreter we can name, since the
-# py launcher resolves a real one at task-run time.
+# 8) register a logon task so the share helper is always up (mirrors the Linux systemd service).
 $pyw = $null
 $pywPre = ""
-if ($pyExe) {
+if ($runtimeOk) {
+    $pyw = $shareExe
+} elseif ($pyExe) {
     $pyw = ($pyExe -replace "python\.exe$", "pythonw.exe")
     if (-not (Test-Path $pyw)) { $pyw = $pyExe }
 } else {
@@ -357,19 +433,7 @@ if ($pyw) {
             Write-Warning "Startup shortcut also failed ($($_.Exception.Message)) - start it by hand: pythonw rp-webrtc.py"
         }
     }
-    # Replace a daemon that's already running: otherwise the new one finds the control port
-    # taken, exits ("already running"), and the OLD code keeps serving until the next logon -
-    # re-running this installer to update would silently change nothing (found in the VM).
-    $old = Get-CimInstance Win32_Process -Filter "Name LIKE 'python%'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -like '*rp-webrtc.py*' }
-    foreach ($o in @($old)) {
-        if (-not $o) { continue }
-        Get-CimInstance Win32_Process -Filter "ParentProcessId = $($o.ProcessId)" -ErrorAction SilentlyContinue |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }   # ffmpeg, mediamtx, cloudflared
-        Stop-Process -Id $o.ProcessId -Force -ErrorAction SilentlyContinue
-        Write-Host "Stopped the old screen-share daemon (pid $($o.ProcessId))."
-    }
-    if ($old) { Start-Sleep -Seconds 1 }
+    Stop-ShareDaemon
     # Start it through the logon task when there is one, so it runs as the signed-in user,
     # un-elevated, exactly as it will after a reboot (this script itself is usually elevated).
     $started = $false
@@ -396,13 +460,11 @@ function Test-Dep($name, $present) {
     if ($present) { Write-Host ("  [ok]   {0}" -f $name) }
     else          { Write-Warning ("[miss] {0}" -f $name) }
 }
-$pyaudioOk = $false
-if ($pyExe) { try { & $pyExe -c "import pyaudiowpatch" 2>$null; $pyaudioOk = ($LASTEXITCODE -eq 0) } catch {} }
+
 Write-Host ""
 Write-Host "Dependency check:"
-Test-Dep "Python"           ([bool]$pyExe)
+Test-Dep "share helper runtime" ($runtimeOk -or [bool]$pyExe)
 Test-Dep "ffmpeg"           ([bool](Get-Command ffmpeg -ErrorAction SilentlyContinue))
-Test-Dep "pyaudiowpatch (audio fallback for Windows 10 before 2004)" $pyaudioOk
 Test-Dep "mediamtx.exe"     (Test-Path (Join-Path $repo "bin\mediamtx.exe"))
 Test-Dep "cloudflared.exe (off-LAN)" (Test-Path (Join-Path $repo "bin\cloudflared.exe"))
 

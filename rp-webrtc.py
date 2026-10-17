@@ -2668,19 +2668,30 @@ def selftest():
         L("capture+encode: SKIP (no monitor)")
     # audio
     if IS_WIN:
+        # What a share actually uses: WASAPI process loopback (no packages needed).
         try:
-            import pyaudiowpatch  # noqa: F401
-            rms, info = _win_audio_rms()
-            if rms is None:
-                L("audio: pyaudiowpatch OK but %s" % info)
-            else:
-                L("audio: WASAPI loopback %s, level RMS=%.0f -> %s" % (info, rms, "SILENT (nothing playing?)" if rms < 5 else "CAPTURING"))
+            pid = _steam_audio_pid()
+            cap = WasapiExcludeSteam(pid or os.getpid())
+            time.sleep(1.0)
+            n = cap.get_read_available(); raw = cap.read(n); cap.stop()
+            sm = struct.unpack("<%dh" % (len(raw) // 2), raw) if raw else ()
+            rms = (sum(x * x for x in sm) / len(sm)) ** 0.5 if sm else 0.0
+            L("audio: process loopback OK (%s), %d frames/s, RMS=%.0f -> %s" % (
+                "excluding Steam pid %d" % pid if pid else "Steam not running",
+                n, rms, "SILENT (nothing playing?)" if rms < 5 else "CAPTURING"))
         except Exception as ex:
-            L("audio: pyaudiowpatch MISSING (%s) -> python -m pip install pyaudiowpatch" % ex)
+            L("audio: process loopback UNAVAILABLE (%s) -> whole-desktop fallback" % ex)
+            try:
+                import pyaudiowpatch  # noqa: F401
+                rms, info = _win_audio_rms()
+                L("   fallback WASAPI loopback: %s" % (info if rms is None else "%s RMS=%.0f" % (info, rms)))
+            except Exception as ex2:
+                L("   fallback: pyaudiowpatch MISSING (%s)" % ex2)
     else:
         L("audio: pulse monitor = %s" % (_pulse_monitor() or "NONE"))
-    ai, win_pcm = _audio_input()
-    L("audio input args: %s" % (" ".join(ai) if ai else "[] (none -> video only)"))
+    if not IS_WIN:
+        ai, win_pcm = _audio_input()
+        L("audio input args: %s" % (" ".join(ai) if ai else "[] (none -> video only)"))
     L("=== self-test done ===")
 
 

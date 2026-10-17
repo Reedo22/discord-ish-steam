@@ -74,7 +74,11 @@ jobs:
           if ($cfg.plugins.enabledPlugins -notcontains 'discordish-chat') { throw "plugin not enabled" }
           if (-not (Test-Path C:\fakesteam\millennium\plugins\discordish-chat\backend\main.lua)) { throw "plugin not copied" }
           if (-not (Test-Path "$env:USERPROFILE\discord-ish-steam\bin\mediamtx.exe")) { throw "mediamtx.exe missing" }
-          if (-not (Get-ScheduledTask -TaskName discordish-rp-webrtc -ErrorAction SilentlyContinue)) { throw "logon task missing" }
+          $task = Get-ScheduledTask -TaskName discordish-rp-webrtc -ErrorAction SilentlyContinue
+          if (-not $task) { throw "logon task missing" }
+          # The helper must run on the private runtime, not a system Python (none is needed).
+          $exe = "$env:LOCALAPPDATA\discord-ish-steam\runtime\discordish-share.exe"
+          if ($task.Actions[0].Execute -ne $exe) { throw "task runs $($task.Actions[0].Execute), not $exe" }
           $ok = $false
           foreach ($i in 1..30) {
             try { $j = Invoke-RestMethod http://127.0.0.1:48592/ping; if ($j.ok) { $ok = $true; break } } catch {}
@@ -82,18 +86,21 @@ jobs:
           }
           if (-not $ok) { throw "daemon never answered /ping" }
           Write-Host "daemon up:" ($j | ConvertTo-Json -Compress)
+          $names = (Get-CimInstance Win32_Process | ? { $_.CommandLine -like '*rp-webrtc.py*' }).Name
+          if ($names -notcontains 'discordish-share.exe') { throw "helper not running as discordish-share.exe: $names" }
+          & "$env:LOCALAPPDATA\discord-ish-steam\runtime\python.exe" "$env:USERPROFILE\discord-ish-steam\rp-webrtc.py" --selftest
 
       - name: re-run setup EXE (update) replaces the running daemon
         shell: pwsh
         env:
           DS_REPO_REF: ${{ github.sha }}
         run: |
-          $before = (Get-CimInstance Win32_Process | ? { $_.CommandLine -like '*rp-webrtc.py*' -and $_.Name -like 'python*' }).ProcessId
+          $before = (Get-CimInstance Win32_Process | ? { $_.CommandLine -like '*rp-webrtc.py*' -and $_.Name -notmatch '^(powershell|pwsh|cmd)' }).ProcessId
           $p = Start-Process dist\discord-ish-steam-setup.exe -ArgumentList '/S','/offline' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "setup EXE exited $($p.ExitCode)" }
           $ok = $false
           foreach ($i in 1..30) {
-            $after = (Get-CimInstance Win32_Process | ? { $_.CommandLine -like '*rp-webrtc.py*' -and $_.Name -like 'python*' }).ProcessId
+            $after = (Get-CimInstance Win32_Process | ? { $_.CommandLine -like '*rp-webrtc.py*' -and $_.Name -notmatch '^(powershell|pwsh|cmd)' }).ProcessId
             try { $j = Invoke-RestMethod http://127.0.0.1:48592/ping; if ($j.ok -and $after -and -not ($after | ? { $before -contains $_ })) { $ok = $true; break } } catch {}
             Start-Sleep 1
           }
