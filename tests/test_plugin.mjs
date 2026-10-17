@@ -180,3 +180,45 @@ test("private address detection", () => {
   for (const h of ["8.8.8.8", "172.15.0.1", "172.32.0.1", "100.128.0.1", "192.169.0.1", "example.com", "::ffff:8.8.8.8"])
     assert.equal(priv(h), false, h);
 });
+
+test("user CSS can't load remote resources", () => {
+  const { win } = boot();
+  const s = win.__ds_test.sanitizeUserCss;
+  const css = s(`@import url("https://evil.example/x.css");
+.a { background: url(https://evil.example/?k=1) }
+.b { background: url( 'http://x' ) }
+.c { background: u\\72l(https://evil.example) }
+.d { background: image-set("https://evil.example/a.png" 1x) }
+.e { background: url(data:image/png;base64,AAAA) }
+:root { --dc-bg: #000 }`);
+  assert.doesNotMatch(css, /evil\.example|http:\/\/x/);
+  assert.match(css, /url\(data:image\/png;base64,AAAA\)/);
+  assert.match(css, /--dc-bg: #000/);
+});
+
+test("theme tokens: presets, accent and corners become :root overrides", () => {
+  const { win } = boot();
+  const css = win.__ds_test.themeCss({ preset: "mocha", accent: "#ff0000", radius: "round", css: ".x{}" });
+  assert.match(css, /^:root:root \{/);
+  assert.match(css, /--dc-accent: #ff0000;/);          // explicit accent beats the preset's
+  assert.match(css, /--dc-bg: #1e1e2e;/);
+  assert.match(css, /--dc-radius-lg: 18px;/);
+  assert.match(css, /\.x\{\}$/);
+  assert.equal(win.__ds_test.themeCss({ preset: "discord", accent: "", radius: "default", css: "" }), "");
+});
+
+test("theme codes round-trip and junk is rejected", () => {
+  const { win, store } = boot();
+  const t = win.__ds_test;
+  const th = { preset: "steam", accent: "#123abc", radius: "sharp", css: ".friend { color: red }" };
+  const code = t.exportTheme(th);
+  assert.match(code, /^dstheme:[A-Za-z0-9+/=]+$/);
+  assert.deepEqual({ ...t.importTheme(code) }, th);
+  assert.equal(t.importTheme("hello"), null);
+  assert.equal(t.importTheme("dstheme:!!!"), null);
+  // invalid fields fall back to defaults instead of reaching the page
+  const bad = t.importTheme("dstheme:" + Buffer.from(JSON.stringify(
+    { preset: "nope", accent: "red;}body{display:none", radius: "huge", css: 5 })).toString("base64"));
+  assert.deepEqual({ ...bad }, { preset: "discord", accent: "", radius: "default", css: "" });
+  assert.equal(store.has("ds_theme"), false);            // importing alone doesn't save
+});

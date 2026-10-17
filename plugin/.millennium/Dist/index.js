@@ -1111,6 +1111,166 @@
     if (st.textContent !== _cssText) st.textContent = _cssText;
   }
 
+  // === Appearance (user themes) =============================================
+  // The reskin is driven by CSS variables (theme/friends.custom.css :root). A theme = a preset
+  // token set + optional accent/roundness overrides + the user's own CSS, stored in this Steam
+  // profile's localStorage and injected after the main sheet. Nothing leaves the PC.
+  var THEME_KEY = "ds_theme";
+  var PRESETS = {
+    discord: { label: "Discord", t: {} },
+    midnight: { label: "Midnight (OLED)", t: {
+      sidebar: "#0b0b0d", bg: "#000000", darkest: "#1a1a1e", raise: "#1c1c21", hover: "#16161a",
+      panel: "#0b0b0d", popover: "#111114", media: "#000000" } },
+    steam: { label: "Steam blue", t: {
+      sidebar: "#171d25", bg: "#1b2838", darkest: "#0e1419", raise: "#2a3f5a", hover: "#22344a",
+      panel: "#141b24", popover: "#0f151c", text: "#c7d5e0", bright: "#ffffff", muted: "#8f98a0",
+      accent: "#1a9fff", online: "#57cbde", idle: "#e4b54b", offline: "#6d7882" } },
+    mocha: { label: "Catppuccin Mocha", t: {
+      sidebar: "#181825", bg: "#1e1e2e", darkest: "#11111b", raise: "#313244", hover: "#2a2b3c",
+      panel: "#181825", popover: "#11111b", text: "#cdd6f4", bright: "#f5f7ff", muted: "#a6adc8",
+      accent: "#cba6f7", "on-accent": "#11111b", danger: "#f38ba8", "danger-hover": "#eba0ac",
+      online: "#a6e3a1", idle: "#f9e2af", offline: "#6c7086" } },
+  };
+  var RADII = { sharp: ["2px", "3px", "4px"], default: null, round: ["10px", "14px", "18px"] };
+  // Anything stored or imported goes through here, so only known values reach the page.
+  function normTheme(s) {
+    var d = { preset: "discord", accent: "", radius: "default", css: "" };
+    if (s && typeof s === "object") {
+      if (PRESETS.hasOwnProperty(s.preset)) d.preset = s.preset;
+      if (/^#[0-9a-f]{6}$/i.test(s.accent || "")) d.accent = s.accent;
+      if (RADII.hasOwnProperty(s.radius)) d.radius = s.radius;
+      if (typeof s.css === "string") d.css = s.css.slice(0, 50000);
+    }
+    return d;
+  }
+  function loadTheme() {
+    try { return normTheme(JSON.parse(localStorage.getItem(THEME_KEY))); } catch (e) { return normTheme(null); }
+  }
+  // Custom CSS can't run script, but it CAN make Steam fetch remote URLs (url(), @import), which
+  // would tell a theme's author when you open Steam and, with attribute selectors, leak what's
+  // on screen. Themes get pasted from strangers, so only inline data: resources are kept.
+  function sanitizeUserCss(css) {
+    return String(css || "")
+      .replace(/\\/g, "")                                   // no escapes to smuggle "url(" past us
+      .replace(/@import[^;]*;?/gi, "/* @import removed */")
+      .replace(/url\(\s*(['"]?)(?!data:)[^)]*\)/gi, "none")
+      .replace(/[a-z-]*\([^)]*:\/\/[^)]*\)/gi, "none")      // any other function given a URL (image-set, u\72l, ...)
+      .replace(/<\/?style/gi, "");
+  }
+  function themeCss(th) {
+    var t = Object.assign({}, (PRESETS[th.preset] || PRESETS.discord).t);
+    if (th.accent) t.accent = th.accent;
+    var r = RADII[th.radius];
+    if (r) { t["radius-sm"] = r[0]; t.radius = r[1]; t["radius-lg"] = r[2]; }
+    var vars = Object.keys(t).map(function (k) { return "  --dc-" + k + ": " + t[k] + ";"; }).join("\n");
+    // :root:root outranks the sheet's :root wherever Millennium puts quick.css.
+    return (vars ? ":root:root {\n" + vars + "\n}\n" : "") + sanitizeUserCss(th.css);
+  }
+  function applyTheme(doc) {
+    var css = themeCss(window.__ds_theme || (window.__ds_theme = loadTheme()));
+    var st = doc.getElementById("discordish-user-css");
+    if (!st) {
+      st = doc.createElement("style");
+      st.id = "discordish-user-css";
+    }
+    // keep it LAST in <head> so it wins over the main sheet and quick.css
+    var head = doc.head || doc.documentElement;
+    if (head.lastElementChild !== st) head.appendChild(st);
+    if (st.textContent !== css) st.textContent = css;
+  }
+  function saveTheme(th) {
+    window.__ds_theme = th;
+    try { localStorage.setItem(THEME_KEY, JSON.stringify(th)); } catch (e) {}
+    friendsDocs().forEach(function (d) { try { applyTheme(d); } catch (e) {} });
+  }
+  // Export/import as one line of text people can paste in a post: "dstheme:" + base64(JSON).
+  function exportTheme(th) {
+    return "dstheme:" + btoa(unescape(encodeURIComponent(JSON.stringify(th))));
+  }
+  function importTheme(code) {
+    var m = String(code || "").trim().match(/^dstheme:([A-Za-z0-9+/=]+)$/);
+    if (!m) return null;
+    try {
+      return normTheme(JSON.parse(decodeURIComponent(escape(atob(m[1])))));
+    } catch (e) { return null; }
+  }
+
+  // Palette button next to "add friend" opens the Appearance panel.
+  function appearanceButton(doc) {
+    var host = doc.querySelector(".friendsTabButtonsContainer");
+    if (!host || host.querySelector(".ds-theme-btn")) return;
+    var b = el(doc, "div", "ds-theme-btn no-drag");
+    b.title = "Appearance";
+    b.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2C6.5 2 2 6.1 2 11.2c0 3.6 2.9 6.3 6.4 6.3h1.4c.8 0 1.4.6 1.4 1.4 0 .4-.1.7-.4 1-.3.3-.4.6-.4 1 0 .8.6 1.1 1.6 1.1 5.5 0 10-4.3 10-9.6C22 6.4 17.5 2 12 2Zm-5.5 10a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm3-4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm3 4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z"/></svg>';
+    b.addEventListener("click", function (e) { e.stopPropagation(); toggleAppearance(doc); });
+    var add = host.querySelector("a");                    // the add-friend link
+    host.insertBefore(b, add && add.parentNode === host ? add : null);
+  }
+  function toggleAppearance(doc) {
+    var open = doc.querySelector(".ds-theme-panel");
+    if (open) { open.remove(); return; }
+    var th = Object.assign({}, window.__ds_theme || loadTheme());
+    var pop = el(doc, "div", "ds-voice-settings ds-theme-panel");
+    var t = el(doc, "div", "ds-vs-title"); t.textContent = "Appearance"; pop.appendChild(t);
+    function row(label, ctl) {
+      var r = el(doc, "div", "ds-vs-row"), l = el(doc, "span", "ds-vs-label");
+      l.textContent = label; r.appendChild(l); r.appendChild(ctl); pop.appendChild(r); return ctl;
+    }
+    function select(opts, val, onchange) {
+      var s = el(doc, "select", "ds-vs-select");
+      opts.forEach(function (o) { var op = el(doc, "option"); op.value = o[0]; op.textContent = o[1]; s.appendChild(op); });
+      s.value = val; s.addEventListener("change", function () { onchange(s.value); }); return s;
+    }
+    var presetSel = row("Theme", select(Object.keys(PRESETS).map(function (k) { return [k, PRESETS[k].label]; }), th.preset,
+      function (v) { th.preset = v; th.accent = ""; accent.value = presetAccent(); saveTheme(th); }));
+    function presetAccent() { return th.accent || PRESETS[th.preset].t.accent || "#5865f2"; }
+    var accent = el(doc, "input", "ds-theme-color"); accent.type = "color"; accent.value = presetAccent();
+    accent.addEventListener("input", function () { th.accent = accent.value; saveTheme(th); });
+    row("Accent", accent);
+    var radiusSel = row("Corners", select([["sharp", "Sharp"], ["default", "Default"], ["round", "Round"]], th.radius,
+      function (v) { th.radius = v; saveTheme(th); }));
+    var cl = el(doc, "div", "ds-vs-label ds-theme-sub"); cl.textContent = "Custom CSS"; pop.appendChild(cl);
+    var css = el(doc, "textarea", "ds-theme-css");
+    css.spellcheck = false;
+    css.placeholder = ":root { --dc-bg: #202225; }\n.friend { border-radius: 0 !important; }";
+    css.value = th.css;
+    var cssTimer = null;
+    css.addEventListener("input", function () {
+      clearTimeout(cssTimer);
+      cssTimer = setTimeout(function () { th.css = css.value; saveTheme(th); }, 300);
+    });
+    pop.appendChild(css);
+    var status = el(doc, "div", "ds-src-hint ds-theme-status");
+    var btns = el(doc, "div", "ds-theme-btns");
+    function button(label, fn) { var b = el(doc, "button", "ds-stream-stop"); b.textContent = label; b.addEventListener("click", fn); btns.appendChild(b); }
+    button("Copy theme code", function () {
+      var code = exportTheme(th);
+      try { navigator.clipboard.writeText(code); status.textContent = "Copied. Paste it anywhere to share."; }
+      catch (e) { css.value = code; status.textContent = "Copy the code from the box."; }
+    });
+    button("Paste theme code", function () {
+      var apply = function (text) {
+        var got = importTheme(text);
+        if (!got) { status.textContent = "That isn't a theme code (it starts with dstheme:)."; return; }
+        th = got; saveTheme(th);
+        presetSel.value = th.preset; radiusSel.value = th.radius; accent.value = presetAccent(); css.value = th.css;
+        status.textContent = "Theme applied.";
+      };
+      try { navigator.clipboard.readText().then(apply, function () { apply(css.value); }); } catch (e) { apply(css.value); }
+    });
+    button("Reset", function () {
+      th = { preset: "discord", accent: "", radius: "default", css: "" }; saveTheme(th);
+      presetSel.value = "discord"; radiusSel.value = "default"; accent.value = presetAccent(); css.value = "";
+      status.textContent = "Back to the default look.";
+    });
+    pop.appendChild(btns); pop.appendChild(status);
+    var close = el(doc, "button", "ds-stream-go"); close.textContent = "Done";
+    close.addEventListener("click", function () { pop.remove(); });
+    pop.appendChild(close);
+    pop.addEventListener("click", function (e) { e.stopPropagation(); });
+    (doc.body || doc.documentElement).appendChild(pop);
+  }
+
   // === auto-signaling over Steam chat ======================================
   // The host sends "ds-screenshare::<url>" (or ::stop) to the friend over chat; the
   // viewer polls friend chats for it and sets window.__ds_view_url so the call tile
@@ -1185,7 +1345,9 @@
   }
   // pure helpers, exposed for tests/test_plugin.mjs (no effect in Steam)
   window.__ds_test = { sigPayload: sigPayload, parseSignal: parseSignal, signalIsFresh: signalIsFresh,
-                      safeShareUrl: safeShareUrl, isPrivateHost: isPrivateHost };
+                      safeShareUrl: safeShareUrl, isPrivateHost: isPrivateHost,
+                      sanitizeUserCss: sanitizeUserCss, themeCss: themeCss, exportTheme: exportTheme,
+                      importTheme: importTheme, loadTheme: loadTheme };
   function friendAcctForDoc(doc) {
     try {
       var name = chatFriendName(doc).toLowerCase();
@@ -1480,6 +1642,8 @@
     window.__ds_any_incall = docs.some(function (d) { try { return docInCall(d); } catch (e) { return false; } });
     docs.forEach(function (doc) {
       try { injectCSS(doc); } catch (e) {}
+      try { applyTheme(doc); } catch (e) {}
+      try { appearanceButton(doc); } catch (e) {}
       try { oneClickOpen(doc); } catch (e) {}
       try { chatTweaks(doc); } catch (e) {}
       try { ringUI(doc); } catch (e) {}
@@ -1521,7 +1685,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 73;
+  var VERSION = 74;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {

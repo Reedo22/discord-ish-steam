@@ -110,6 +110,36 @@ One capture and one encode feed both transports; the viewer races them and keeps
 whichever connects first. Desktop audio is captured without a virtual device: a private
 PipeWire stream on Linux, WASAPI process loopback on Windows 10 2004+/11.
 
+## Themes
+
+Don't like the look? Click the **palette** button next to "add friend" in the friends list:
+
+- **Theme**: Discord (default), Midnight (OLED black), Steam blue, Catppuccin Mocha.
+- **Accent** colour and **corner** roundness.
+- **Custom CSS** for anything else, applied as you type.
+- **Copy / Paste theme code**: one line starting with `dstheme:` that you can post for others.
+  Pasted themes can't load anything from the internet (remote `url()` and `@import` are
+  stripped), so a shared theme can't track you.
+
+Everything is drawn from CSS variables, so most themes are just a `:root` block:
+
+```css
+:root {
+  --dc-sidebar: #2b2d31;  --dc-bg: #313338;      --dc-darkest: #1e1f22;
+  --dc-raise: #383a40;    --dc-hover: #35373c;   --dc-panel: #232428;  --dc-popover: #1e1f22;
+  --dc-text: #dbdee1;     --dc-bright: #f2f3f5;  --dc-muted: #949ba4;
+  --dc-accent: #5865f2;   --dc-on-accent: #fff;  --dc-danger: #f23f43;
+  --dc-online: #23a55a;   --dc-idle: #f0b232;    --dc-offline: #80848e;
+  --dc-radius-sm: 6px;    --dc-radius: 8px;      --dc-radius-lg: 12px;
+  --dc-font: inherit;
+}
+```
+
+The full list with comments is at the top of
+[`theme/friends.custom.css`](theme/friends.custom.css). Steam's own gradients and glows are
+removed there, so a theme doesn't have to fight them. Themes are saved per Steam account on
+your PC.
+
 ## Troubleshooting
 
 - **Diagnose the helper**: `python3 rp-webrtc.py --selftest` (Linux) checks capture,
@@ -123,7 +153,8 @@ PipeWire stream on Linux, WASAPI process loopback on Windows 10 2004+/11.
 
 ## Development
 
-- `theme/friends.custom.css`: the reskin (loaded through Millennium's quick CSS).
+- `theme/friends.custom.css`: the reskin (loaded through Millennium's quick CSS). Colours only
+  come from the `--dc-*` tokens at the top; `tests/test_theme.py` fails on a raw colour.
 - `plugin/.millennium/Dist/index.js`: the plugin, hand-written, no build step (CRLF line
   endings). Bump `VERSION` so installed copies pick it up.
 - `rp-webrtc.py`: the share helper. Its control API on `127.0.0.1:48592` only answers
