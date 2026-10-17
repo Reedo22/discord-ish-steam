@@ -87,6 +87,15 @@
   min-width: 240px !important;
   border-right: 1px solid var(--dc-darkest) !important;
 }
+/* Narrow windows: the roster gives up width so the chat stays usable (it never got
+   narrower than 240px, which left ~120px for the chat in a 400px window). */
+@media (max-width: 900px) { .friendsListContainer { width: 230px !important; min-width: 0 !important; } }
+@media (max-width: 640px) { .friendsListContainer { width: 180px !important; } }
+@media (max-width: 480px) {
+  .friendsListContainer { width: 150px !important; }
+  .friendsListContainer .richPresenceLabel, .currentUserContainer .richPresenceContainer,
+  .socialTabContainer .tabLabel { display: none !important; }
+}
 
 .chatDialogs,
 .chatWindow,
@@ -295,6 +304,11 @@
   html body .chatEntry button[title="Send Special"] {
     width: 34px !important; height: 34px !important; min-width: 34px !important; min-height: 34px !important;
     max-width: 34px !important; max-height: 34px !important; flex: 0 0 34px !important; margin: 0 2px !important;
+  }
+  html body .chatEntry .ChatMessageEntryVoice:not(.Active),
+  html body .chatEntry .ChatMessageEntryVoice button {
+    width: 34px !important; height: 34px !important; min-width: 34px !important; min-height: 34px !important;
+    max-width: 34px !important; max-height: 34px !important; flex: 0 0 34px !important;
   }
   html body .chatEntry button[type=submit] { width: 38px !important; height: 38px !important; flex: 0 0 38px !important; margin-left: 4px !important; }
   .chatEntry textarea { padding: 9px 10px !important; }
@@ -781,6 +795,7 @@ html body .ds-voice-settings {
   position: fixed !important; top: 50% !important; bottom: auto !important; left: 50% !important;
   transform: translate(-50%, -50%) !important; max-height: calc(100vh - 32px) !important;
   overflow-y: auto !important; z-index: 1000 !important; width: 330px !important;
+  max-width: calc(100vw - 24px) !important; box-sizing: border-box !important;
 }
 html body .ds-voice-settings .ds-vs-select { width: 190px !important; }
 
@@ -808,7 +823,7 @@ html body .ds-voice-settings .ds-vs-select { width: 190px !important; }
   border-radius: var(--dc-radius-sm) !important; color: var(--dc-muted) !important; cursor: pointer !important;
 }
 .ds-theme-btn:hover { color: var(--dc-bright) !important; background: var(--dc-hover) !important; }
-html body .ds-theme-panel { width: 360px !important; }
+html body .ds-theme-panel { width: 360px !important; max-width: calc(100vw - 24px) !important; box-sizing: border-box !important; }
 .ds-theme-color {
   width: 52px !important; height: 26px !important; padding: 0 !important; cursor: pointer !important;
   border: none !important; border-radius: var(--dc-radius-sm) !important; background: transparent !important;
