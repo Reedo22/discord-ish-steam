@@ -701,3 +701,24 @@ class EndToEndWs(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WinAudioProbe(unittest.TestCase):
+    def test_silent_loopback_does_not_hang(self):
+        """WASAPI loopback hands out no frames while nothing plays; a blocking read() used to
+        hang --selftest forever on PCs without process loopback (Windows 10 before 2004)."""
+        class Stream:
+            def get_read_available(self): return 0
+            def read(self, n, exception_on_overflow=True): raise AssertionError("would block forever")
+            def close(self): pass
+        class PA:
+            paInt16 = 8
+            class PyAudio:
+                def open(self, **kw): return Stream()
+                def terminate(self): pass
+        with mock.patch.object(d, "_wasapi_device", return_value={"index": 0, "ch": 2, "rate": 48000}), \
+             mock.patch.dict(sys.modules, {"pyaudiowpatch": PA}):
+            t0 = time.monotonic()
+            rms, info = d._win_audio_rms()
+        self.assertLess(time.monotonic() - t0, 3)
+        self.assertEqual((rms, info), (0.0, "no samples"))

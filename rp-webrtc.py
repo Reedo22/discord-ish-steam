@@ -2685,9 +2685,15 @@ def _win_audio_rms():
         p = pa.PyAudio()
         s = p.open(format=pa.paInt16, channels=dev["ch"], rate=dev["rate"],
                    frames_per_buffer=1024, input=True, input_device_index=dev["index"])
-        raw = b""
-        for _ in range(max(1, int(dev["rate"] / 1024))):
-            raw += s.read(1024, exception_on_overflow=False)
+        # Loopback delivers NOTHING while the output is silent, so a blocking read() would hang
+        # forever; take whatever arrives within ~1 s instead.
+        raw, deadline = b"", time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            avail = s.get_read_available()
+            if avail:
+                raw += s.read(avail, exception_on_overflow=False)
+            else:
+                time.sleep(0.02)
         s.close(); p.terminate()
         n = len(raw) // 2
         if not n:
