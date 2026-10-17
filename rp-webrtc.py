@@ -2359,8 +2359,20 @@ class H(BaseHTTPRequestHandler):
                 AUDIO = False
             elif au in ("1", "true", "on"):
                 AUDIO = True
+            # The same share requested again moments after it started (a double-click, or two
+            # loaded copies of the plugin both handling one click): keep the running capture.
+            # Restarting tore down the Wayland portal stream mid-negotiation and the new capture
+            # got corrupt frames and died (seen live: 2-3 /starts within 2 s, share never came up).
+            sig = (geom, win, cam, BITRATE, MAX_H, FPS, CODEC, AUDIO)
+            dup = (state.get("start_sig") == sig and capture_alive()
+                   and time.monotonic() - state.get("start_t", 0) < 8)
             try:
-                ok = start_capture(geom=geom, win=win, cam=cam)
+                if dup:
+                    sys.stderr.write("[ctl] duplicate /start ignored (share already starting)\n")
+                    ok = True
+                else:
+                    ok = start_capture(geom=geom, win=win, cam=cam)
+                    state["start_sig"], state["start_t"] = sig, time.monotonic()
             except Exception as e:
                 sys.stderr.write("[ctl] start failed: %r\n" % e)
                 state["err"] = "capture failed to start (%s)" % e

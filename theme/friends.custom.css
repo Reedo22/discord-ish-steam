@@ -671,6 +671,14 @@ html.discordish-incall .chatHeader .ChatMessageEntryVoice { display: none !impor
 .discordish-stage { animation: dsStageIn var(--dc-base) var(--dc-ease); }
 .ds-stream-menu, .ds-src-list { animation: dsPop var(--dc-fast) var(--dc-ease); }
 .ds-voice-settings { animation: dsPopCentered var(--dc-fast) var(--dc-ease); }
+/* Centered in the window, never under the message box: anchored to the call controls it
+   grew past the call area on short windows and hid the Share button. Scrolls if needed. */
+html body .ds-voice-settings {
+  position: fixed !important; top: 50% !important; bottom: auto !important; left: 50% !important;
+  transform: translate(-50%, -50%) !important; max-height: calc(100vh - 32px) !important;
+  overflow-y: auto !important; z-index: 1000 !important; width: 330px !important;
+}
+html body .ds-voice-settings .ds-vs-select { width: 190px !important; }
 
 /* Minimize / expand glides instead of jumping. */
 .discordish-stage {

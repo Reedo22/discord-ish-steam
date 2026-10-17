@@ -189,6 +189,10 @@
   // window.__ds_share_error set to a human-readable reason). Never leaves share_mode set for
   // a share that didn't start — that used to signal a dead URL and give the viewer a black tile.
   function wStartShare(src) {
+    // One start at a time, across BOTH loaded copies of this plugin (bundled + self-updated
+    // share `window`): a second click or a duplicate handler used to fire a second /start that
+    // killed the first share mid-setup.
+    if (window.__ds_share_starting && window.__ds_share_promise) return window.__ds_share_promise;
     window.__ds_share_mode = "webrtc";
     window.__ds_share_starting = true;
     window.__ds_share_error = null;
@@ -205,7 +209,7 @@
     params.push("audio=" + (o.audio === "off" ? "0" : "1"));
     params.push("codec=" + encodeURIComponent(o.codec || "auto"));
     var qs = params.length ? "?" + params.join("&") : "";
-    return fetch(WCTL + "/start" + qs, { cache: "no-store" })
+    return (window.__ds_share_promise = fetch(WCTL + "/start" + qs, { cache: "no-store" })
       .then(function (r) { return r.json(); }, function () { throw new Error(NO_DAEMON); })
       .then(function (j) {
         var cancelled = window.__ds_share_mode !== "webrtc";   // Cancel/Stop clicked while /start ran
@@ -236,7 +240,7 @@
         window.__ds_share_mode = null; window.__ds_share_url = null;
         window.__ds_share_error = cancelled ? null : ((e && e.message) || String(e));
         return null;
-      });
+      }));
   }
   // Watches a live share via /ping (every 5s, only while sharing):
   //  - Cloudflare *quick* tunnels are unmanaged and do die mid-share; the daemon's watchdog
@@ -783,7 +787,11 @@
         if (sprev.__pc) { try { sprev.__pc.close(); } catch (e) {} sprev.__pc = null; }
       }
     };
-    sgo.addEventListener("click", function () {
+    sgo.addEventListener("click", function (e) {
+      // Two loaded copies of the plugin (bundled + self-updated) can both have a listener on
+      // this button; the second one used to undo the first (start -> instantly Cancel/Stop).
+      if (e && e.__dsHandled) return;
+      if (e) e.__dsHandled = true;
       if (window.__ds_share_mode === "webrtc") {
         try { sendSignal(doc, "stop"); } catch (e) {}     // tell the viewer to disconnect
         wStopShare(); setTimeout(srefresh, 60);
@@ -824,6 +832,10 @@
     catch (e) { return 0; }
   }
 
+  function docInCall(doc) {
+    return !!(doc.querySelector(".OneOnOneVoiceMembers") || doc.querySelector(".VoiceChannelParticipants"))
+        && !!doc.querySelector(".activeVoiceButtons");
+  }
   function callStage(doc) {
     // participant source: 1:1 call members OR group voice-channel participants
     // (both use the same .friend tile structure inside)
@@ -832,7 +844,10 @@
     var inCall = !!src && hasControls;
 
     // When the call ends, stop any share we're hosting + drop any stream we're viewing.
-    if (!inCall) {
+    // "Ends" = no friends window shows a call. Steam can have several open (the friends list
+    // plus an undocked chat window); judging by THIS one alone stopped every share ~50 ms
+    // after it started whenever the call lived in the other window.
+    if (!inCall && !window.__ds_any_incall) {
       // tell the viewer too: in a group call they may still be connected, and an unsent
       // "stop" left the last share URL as the newest signal -> a dead tile next call
       if (window.__ds_share_mode === "webrtc") { try { sendSignalToAcct(window.__ds_sig_acct, "stop"); wStopShare(); } catch (e) {} }
@@ -1377,7 +1392,9 @@
     __ds_tickn++;
     if (__ds_tickn % 7 === 0) { try { pollSignals(); } catch (e) {} }   // ~every 1s
     if (__ds_tickn % 20 === 1) { try { ensureDocked(); } catch (e) {} }   // until the store is up
-    friendsDocs().forEach(function (doc) {
+    var docs = friendsDocs();
+    window.__ds_any_incall = docs.some(function (d) { try { return docInCall(d); } catch (e) { return false; } });
+    docs.forEach(function (doc) {
       try { injectCSS(doc); } catch (e) {}
       try { oneClickOpen(doc); } catch (e) {}
       try { chatTweaks(doc); } catch (e) {}
@@ -1420,7 +1437,7 @@
   // VERSION is newer than ours, run that instead of this bundled copy (strip the
   // trailing ES module statement first — eval rejects module syntax). init() runs only
   // after this resolves, so we never double-initialise; falls back to bundled if offline.
-  var VERSION = 70;
+  var VERSION = 71;
   try { window.__ds_VERSION = VERSION; } catch (e) {}
   var JS_URL = "https://raw.githubusercontent.com/Reedo22/discord-ish-steam/master/plugin/.millennium/Dist/index.js";
   if (!window.__DISCORDISH_BOOTED__) {
